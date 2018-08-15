@@ -22,10 +22,10 @@ func initConsulDiscoverySource(config config.ConfigUtil) discoverySource {
 
 	client, err := api.NewClient(clientConfig)
 	if err != nil {
-		fmt.Printf("Couldn't create consul client: %s\n", err.Error())
+		lgr.logE(fmt.Sprintf("Failed to create Consul client: %s", err.Error()))
 	}
 
-	fmt.Printf("Created consul client with config: %v\n", clientConfig)
+	lgr.logI(fmt.Sprintf("Consul client address set to %v", clientConfig.Address))
 
 	d := consulDiscoverySource{
 		client: client,
@@ -49,31 +49,31 @@ func (d consulDiscoverySource) RegisterService() (serviceID string, err error) {
 		version = "1.0.0"
 	}
 
-	var deregTime int
+	/*var deregTime int
 	deregTime, ok = conf.GetInt("kumuluzee.config.consul.deregister-critical-service-after-s")
 	if !ok {
 		deregTime = 60
-	}
+	}*/
 
 	reg := api.AgentServiceRegistration{
 		//ID:   "kek2",
-		Name: envName + "-" + serName,
-		Tags: []string{"version=" + version},
-		Port: 9000,
-		//Address: "192.168.2.50",
-		Checks: api.AgentServiceChecks{
+		Name:    envName + "-" + serName,
+		Tags:    []string{"version=" + version},
+		Port:    9000,
+		Address: "192.168.2.50",
+		Checks:  api.AgentServiceChecks{
 			/*&api.AgentServiceCheck{
 				Name:     "health failure",
 				Interval: "10s",
 				HTTP:     "http://127.0.0.1:9000/health?s=fail",
 				DeregisterCriticalServiceAfter: strconv.Itoa(deregTime) + "s",
 			},*/
-			&api.AgentServiceCheck{
+			/*&api.AgentServiceCheck{
 				Name:     "health alright",
 				Interval: "30s",
 				HTTP:     "http://127.0.0.1:9000/health?s=ok",
 				DeregisterCriticalServiceAfter: strconv.Itoa(deregTime) + "s",
-			},
+			},*/
 			/*&api.AgentServiceCheck{
 				Name:     "health warning",
 				Interval: "10s",

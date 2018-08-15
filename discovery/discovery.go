@@ -10,7 +10,10 @@ var conf config.ConfigUtil
 
 type DiscoveryUtil struct {
 	discoverySources []discoverySource
+	Logger           logger
 }
+
+var lgr *logger
 
 type Service struct {
 	Address string
@@ -22,9 +25,13 @@ type discoverySource interface {
 	DiscoverService(name string, tag string, passing bool) (Service, error)
 }
 
-func Initialize(ext string, configPath string) DiscoveryUtil {
+func Initialize(ext string, configPath string, logLevel int) DiscoveryUtil {
 
-	conf = config.Initialize("", "")
+	lgr = &logger{
+		LogLevel: logLevel,
+	}
+
+	conf = config.Initialize("", "", 2)
 
 	var src discoverySource
 
@@ -36,7 +43,10 @@ func Initialize(ext string, configPath string) DiscoveryUtil {
 		// TODO: invalid ext
 	}
 
-	k := DiscoveryUtil{[]discoverySource{src}}
+	k := DiscoveryUtil{
+		[]discoverySource{src},
+		*lgr,
+	}
 
 	return k
 }
