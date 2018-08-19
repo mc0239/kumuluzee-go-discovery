@@ -36,7 +36,7 @@ Connect to a given discovery source. Function accepts `discovery.Options` struct
 * **Extension** (string): name of service discovery source, possible values are "consul" 
 * **FilePath** (string): path to configuration source file, defaults to "config/config.yaml"
 
-Firstly we need to import KumuluzEE Discovery client.
+Example usage:
 
 ```go
 // import package
@@ -76,7 +76,7 @@ disc.RegisterService({
 ```
 
 <s>To register a service with etcd, service URL has to be provided with the configuration key `kumuluzee.server.base-url` in the following format:`http://localhost:8080`.</s> Consul implementation uses agent's IP address for the URL of registered services, so this key is not used.
-
+<s>
 ***.discoverService(options)***
 
 Discovers service on specified discovery source.
@@ -146,6 +146,8 @@ When submitting an issue, please follow the  [guidelines](https://github.com/kum
 When submitting a bugfix, write a test that exposes the bug and fails before applying your fix. Submit the test alongside the fix.
 
 When submitting a new feature, add tests that cover the feature.
+
+</s>
 
 ## License
 
