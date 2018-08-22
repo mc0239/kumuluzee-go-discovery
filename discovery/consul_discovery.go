@@ -1,9 +1,9 @@
 package discovery
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/mc0239/kumuluzee-go-config/config"
@@ -20,8 +20,10 @@ type consulDiscoverySource struct {
 type registerableService struct {
 	isRegistered bool
 
+	port    int
+	address string
+
 	id         string
-	port       int
 	name       string
 	versionTag string
 
@@ -37,10 +39,10 @@ func initConsulDiscoverySource(config config.Util, logger *logm.Logm) discoveryS
 
 	client, err := api.NewClient(clientConfig)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to create Consul client: %s", err.Error()))
+		logger.Error("Failed to create Consul client: %s", err.Error())
 	}
 
-	logger.Info(fmt.Sprintf("Consul client address set to %v", clientConfig.Address))
+	logger.Info("Consul client address set to %s", clientConfig.Address)
 
 	d := consulDiscoverySource{
 		client: client,
@@ -63,10 +65,14 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 		regService.options.Value = name
 	}
 
-	if port, ok := conf.GetInt("kumuluzee.server.http.port"); ok {
-		regService.port = port
+	if port, ok := conf.GetFloat("kumuluzee.server.http.port"); ok {
+		regService.port = int(port)
 	} else {
 		regService.port = 80 // TODO: default port to register?
+	}
+
+	if addr, ok := conf.GetString("kumuluzee.server.http.address"); ok {
+		regService.address = addr
 	}
 
 	if env, ok := conf.GetString("kumuluzee.env.name"); ok {
@@ -75,6 +81,13 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 
 	if ver, ok := conf.GetString("kumuluzee.version"); ok {
 		regService.options.Version = ver
+	}
+
+	if ttl, ok := conf.GetInt("kumuluzee.discovery.ttl"); ok {
+		regService.options.TTL = int64(ttl)
+	}
+	if regService.options.TTL == 0 {
+		regService.options.TTL = 30
 	}
 
 	uuid4, err := uuid.NewV4()
@@ -86,34 +99,44 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 	regService.name = regService.options.Environment + "-" + regService.options.Value
 	regService.versionTag = "version=" + regService.options.Version
 
-	if isRegistered := d.isServiceRegistered(regService); isRegistered && regService.options.Singleton {
-		d.logger.Info("Service already registered, not registering with songleton option true ...")
+	if isRegistered := d.isServiceRegistered(&regService); isRegistered && regService.options.Singleton {
+		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
-		d.logger.Info("Registering service ...")
+		d.logger.Info("Registering service: id=%s address=%s port=%d", regService.id, regService.address, regService.port)
 
-		regErr := d.client.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		agentRegistration := api.AgentServiceRegistration{
 			Port: regService.port,
 			ID:   regService.id,
 			Name: regService.name,
 			Tags: []string{"<service protocol>", regService.versionTag},
 			Check: &api.AgentServiceCheck{
-				TTL: strconv.FormatInt(regService.options.TTL, 10) + "s",
+				CheckID: "check-" + regService.id,
+				TTL:     strconv.FormatInt(regService.options.TTL, 10) + "s",
 				DeregisterCriticalServiceAfter: strconv.FormatInt(10, 10) + "s",
 			},
-		})
+		}
 
-		if regErr != nil {
-			d.logger.Error("Service register fail ...")
+		if regService.address != "" {
+			agentRegistration.Address = regService.address
+		}
+
+		err = d.client.Agent().ServiceRegister(&agentRegistration)
+
+		if err != nil {
+			d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
 			// retry delay stuff somehow
 		}
 
+		d.logger.Info("Service registered, id=%s", regService.id)
 		regService.isRegistered = true
 	}
 
-	return regService.id, nil // since id is not specified it equals the name of the service
+	go d.checkIn(&regService)
+
+	return regService.id, nil
 }
 
-func (d consulDiscoverySource) isServiceRegistered(reg registerableService) bool {
+func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) bool {
 	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
 
 	if err != nil {
@@ -132,34 +155,25 @@ func (d consulDiscoverySource) isServiceRegistered(reg registerableService) bool
 	return false
 }
 
-func (d consulDiscoverySource) sendHeartbeat(reg registerableService) {
-	d.logger.Verbose("Sending heartbeat....")
+func (d consulDiscoverySource) checkIn(reg *registerableService) {
+	d.logger.Verbose("Updating TTL for service %s", reg.id)
 
-	checks, err := d.client.Agent().Checks()
+	err := d.client.Agent().UpdateTTL("check-"+reg.id, "serviceid="+reg.id+" time="+time.Now().Format("2006-01-02 15:04:05"), "passing")
 	if err != nil {
-		d.logger.Error("asdasdasdsd.......")
+		d.logger.Error("Updating TTL failed for service %s, error: %s", reg.id, err.Error())
 	}
 
-	var serviceOk bool
-	for _, check := range checks {
-		if check.ServiceID == reg.id && check.Status == "passing" {
-			serviceOk = true
-		}
-	}
-
-	if !serviceOk {
-		reg.isRegistered = false
-		d.logger.Error("SERVCE not registered when tried hearbeating ...")
-		d.RegisterService(*reg.options)
-	}
-
+	time.Sleep(time.Duration(reg.options.PingInterval) * time.Second)
+	d.checkIn(reg)
 }
 
-func (d consulDiscoverySource) DiscoverService(name string, tag string, passing bool) (Service, error) {
+func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
 
-	serviceEntries, _, err := d.client.Health().Service(name, tag, passing, nil)
+	// TODO: ENV? ACCESSTYPE?
+	serviceEntries, _, err := d.client.Health().Service(options.Value, "version="+options.Version, true, nil)
 	if err != nil {
-		panic(err)
+		d.logger.Error("Service discovery failed: %s", err.Error())
+		return Service{}, fmt.Errorf("Service discovery failed: %s", err.Error())
 	}
 
 	var addr string
@@ -171,12 +185,14 @@ func (d consulDiscoverySource) DiscoverService(name string, tag string, passing 
 			addr = serviceEntry.Node.Address
 		}
 		port = serviceEntry.Service.Port
-		fmt.Printf("Service entry: %v:%v\n", addr, strconv.Itoa(port))
+
+		d.logger.Verbose("Found service, address=%s port=%d", addr, port)
+
 		return Service{
 			Address: addr,
 			Port:    port,
 		}, nil
 	}
 
-	return Service{}, errors.New("No services discovered") // TODO: check if really
+	return Service{}, fmt.Errorf("Service discovery failed: No services for given query") // TODO: check if really
 }

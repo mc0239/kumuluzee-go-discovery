@@ -75,7 +75,7 @@ type Service struct {
 
 type discoverySource interface {
 	RegisterService(options RegisterOptions) (serviceID string, err error)
-	DiscoverService(name string, tag string, passing bool) (Service, error)
+	DiscoverService(options DiscoverOptions) (Service, error)
 }
 
 func New(options Options) Util {
@@ -109,6 +109,6 @@ func (d Util) RegisterService(options RegisterOptions) (string, error) {
 	return d.discoverySource.RegisterService(options)
 }
 
-func (d Util) DiscoverService(name string, tag string, passing bool) (Service, error) {
-	return d.discoverySource.DiscoverService(name, tag, passing)
+func (d Util) DiscoverService(options DiscoverOptions) (Service, error) {
+	return d.discoverySource.DiscoverService(options)
 }
