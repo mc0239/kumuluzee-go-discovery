@@ -117,18 +117,20 @@ Service discovery supports two access types:
 *   `DIRECT`  always returns base URL or container URL.
 
 When Consul implementation is used, gateway URL is read from Consul key-value store. It is stored in key`/environments/'environment'/services/'serviceName'/'serviceVersion'/gatewayUrl`  and is automatically updated on changes.
+</s>
 
 **NPM-like versioning**
 
-Service discovery supports NPM-like versioning. If service is registered with version in NPM format, it can be discovered using a NPM range. Some examples:
+Service discovery supports semantic versioning. If service is registered with version in proper semantic version format, it can be discovered using a semantic version range. Service parsing is done using [blang/semver package](https://github.com/blang/semver). How to input ranges and other possible inputs are available in [package's README](https://github.com/blang/semver/blob/master/README.md). NPM-like ranges using `^` and `~` are also supported. Some examples:
 
--   `'*'` would discover the latest version in NPM format
--   `'^1.0.4'` would discover the latest minor version in NPM format
--   `'~1.0.4'` would discover the latest patch version in NPM format
+-   `'^1.0.4'` would discover the latest minor version (equal to range `>=1.0.4 <2.0.0`)
+-   `'~1.0.4'` would discover the latest patch version (equal to range `>=1.0.4 <1.1.0`)
 
-For more information see  [NPM semver documentation](http://docs.npmjs.com/misc/semver).
+For more information see  [Semantic versioning spec](https://semver.org/).
 
 ### Executing service discovery only when needed
+
+<s>
 
 When discovering service with `discoverService` function the service is discovered every time the function is called. While in a run time service is listening for changes so the value of discovered service is changed in a background. Every time a change of discovered service happens info about the change is logged. So in order to access the new discovered service value you need to call discovering function again.
 

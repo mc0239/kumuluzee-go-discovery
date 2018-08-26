@@ -237,25 +237,53 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
 
 	for _, serviceEntry := range serviceEntries {
-		wantVersion, err := semver.Parse(options.Version)
-		if err != nil {
-			return Service{}, err
+
+		var wantVersion semver.Range
+		var err error
+
+		options.Version = strings.Replace(options.Version, "*", "x", -1)
+
+		if strings.HasPrefix(options.Version, "^") {
+			ver, err := semver.ParseTolerant(options.Version[1:])
+			if err == nil {
+				var verNext = ver
+				verNext.Major++
+				wantVersion, err = semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+			} else {
+				return Service{}, err
+			}
+		} else if strings.HasPrefix(options.Version, "~") {
+			ver, err := semver.ParseTolerant(options.Version[1:])
+			if err == nil {
+				var verNext = ver
+				verNext.Minor++
+				wantVersion, err = semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+			} else {
+				return Service{}, err
+			}
+		} else {
+			wantVersion, err = semver.ParseRange(options.Version)
+		}
+
+		if wantVersion == nil || err != nil {
+			return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
 		}
 
 		var foundService = false
 		for _, tag := range serviceEntry.Service.Tags {
 			if strings.HasPrefix(tag, "version") {
 				t := strings.Split(tag, "=")
-				gotVersion, err := semver.Parse(t[1])
+
+				gotVersion, err := semver.ParseTolerant(t[1])
 				if err == nil {
-					if gotVersion.Compare(wantVersion) == 0 {
+					// check if gotVersion is in wantVersion's range
+					if wantVersion(gotVersion) {
 						foundService = true
 						break
 					}
 				} else {
 					d.logger.Warning("Semantic version parsing failed for: %s, error: %s", t[1], err.Error())
 				}
-				break
 			}
 		}
 
