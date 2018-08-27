@@ -34,7 +34,7 @@ Library also supports retry delays on watch connection errors. For more informat
 
 Connect to a given discovery source. Function accepts `discovery.Options` struct with following fields:
 * **Extension** (string): name of service discovery source, possible values are "consul" 
-* **FilePath** (string): path to configuration source file, defaults to "config/config.yaml"
+* **ConfigPath** (string): path to configuration source file, defaults to "config/config.yaml"
 
 Example usage:
 

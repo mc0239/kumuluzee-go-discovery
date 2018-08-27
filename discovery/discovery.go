@@ -11,9 +11,9 @@ var conf config.Util
 type Options struct {
 	// Additional configuration source to connect to. Possible values are: "consul"
 	Extension string
-	// FilePath is a path to configuration file, including the configuration file name.
+	// ConfigPath is a path to configuration file, including the configuration file name.
 	// Passing an empty string will default to config/config.yaml
-	FilePath string
+	ConfigPath string
 	// LogLevel can be used to limit the amount of logging output. Default log level is 0. Level 4
 	// will only output Warnings and Errors, and level 5 will only output errors.
 	// See package github.com/mc0239/logm for more details on logging and log levels.
@@ -83,8 +83,8 @@ func New(options Options) Util {
 	lgr := logm.New("Kumuluz-discovery")
 
 	conf = config.NewUtil(config.Options{
-		FilePath: options.FilePath,
-		LogLevel: logm.LvlWarning,
+		ConfigPath: options.ConfigPath,
+		LogLevel:   logm.LvlWarning,
 	})
 
 	var src discoverySource
