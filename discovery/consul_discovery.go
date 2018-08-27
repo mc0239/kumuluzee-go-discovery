@@ -100,9 +100,15 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 	if env, ok := conf.GetString("kumuluzee.env.name"); ok {
 		regService.options.Environment = env
 	}
+	if regService.options.Environment == "" {
+		regService.options.Environment = "dev"
+	}
 
 	if ver, ok := conf.GetString("kumuluzee.version"); ok {
 		regService.options.Version = ver
+	}
+	if regService.options.Version == "" {
+		regService.options.Version = "1.0.0"
 	}
 
 	if ttl, ok := conf.GetInt("kumuluzee.discovery.ttl"); ok {
