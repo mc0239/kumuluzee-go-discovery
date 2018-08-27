@@ -11,13 +11,7 @@ KumuluzEE Go Discovery provides full support for microservices packed as Docker 
 You can `go get` this package:
 
 ```
-$ go get github.com/mc0239/kumuluzee-go-discovery
-```
-
-Or you can get it via a package manager, for example `dep`:
-
-```
-$ dep ensure -add github.com/mc0239/kumuluzee-go-discovery
+$ go get github.com/mc0239/kumuluzee-go-discovery/discovery
 ```
 
 ## Setup
