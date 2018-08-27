@@ -49,14 +49,14 @@ func initConsulDiscoverySource(config config.Util, logger *logm.Logm) discoveryS
 
 	startRetryDelay, ok := config.Get("kumuluzee.config.start-retry-delay-ms").(float64)
 	if !ok {
-		logger.Error("Failed to assert value kumuluzee.config.start-retry-delay-ms as float64. Using default value 500.")
+		logger.Warning("Failed to assert value kumuluzee.config.start-retry-delay-ms as float64. Using default value 500.")
 		startRetryDelay = 500
 	}
 	d.startRetryDelay = int64(startRetryDelay)
 
 	maxRetryDelay, ok := config.Get("kumuluzee.config.max-retry-delay-ms").(float64)
 	if !ok {
-		logger.Error("Failed to assert value kumuluzee.config.max-retry-delay-ms as float64. Using default value 900000.")
+		logger.Warning("Failed to assert value kumuluzee.config.max-retry-delay-ms as float64. Using default value 900000.")
 		maxRetryDelay = 900000
 	}
 	d.maxRetryDelay = int64(maxRetryDelay)
