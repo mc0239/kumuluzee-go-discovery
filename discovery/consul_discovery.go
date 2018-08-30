@@ -28,9 +28,6 @@ type consulDiscoverySource struct {
 type registerableService struct {
 	isRegistered bool
 
-	port    int
-	address string
-
 	id         string
 	name       string
 	versionTag string
@@ -177,10 +174,10 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 	if isRegistered := d.isServiceRegistered(reg); isRegistered && reg.singleton {
 		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
-		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.address, reg.port)
+		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.options.Server.HTTP.Address, reg.options.Server.HTTP.Port)
 
 		agentRegistration := api.AgentServiceRegistration{
-			Port: reg.port,
+			Port: reg.options.Server.HTTP.Port,
 			ID:   reg.id,
 			Name: reg.name,
 			Tags: []string{"<service protocol>", reg.versionTag},
@@ -191,8 +188,8 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 			},
 		}
 
-		if reg.address != "" {
-			agentRegistration.Address = reg.address
+		if reg.options.Server.HTTP.Address != "" {
+			agentRegistration.Address = reg.options.Server.HTTP.Address
 		}
 
 		err := d.client.Agent().ServiceRegister(&agentRegistration)
@@ -250,44 +247,42 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 		return Service{}, fmt.Errorf("Service discovery failed: %s", err.Error())
 	}
 
-	var addr string
-	var port int
-
 	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
 
+	versionRange, err := d.parseVersion(options.Version)
+	if err != nil {
+		return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
+	}
+
+	return d.extractService(serviceEntries, versionRange)
+}
+
+func (d consulDiscoverySource) parseVersion(version string) (semver.Range, error) {
+	version = strings.Replace(version, "*", "x", -1)
+
+	if strings.HasPrefix(version, "^") {
+		ver, err := semver.ParseTolerant(version[1:])
+		if err == nil {
+			var verNext = ver
+			verNext.Major++
+			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+		}
+		return nil, err
+	} else if strings.HasPrefix(version, "~") {
+		ver, err := semver.ParseTolerant(version[1:])
+		if err == nil {
+			var verNext = ver
+			verNext.Minor++
+			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+		}
+		return nil, err
+	} else {
+		return semver.ParseRange(version)
+	}
+}
+
+func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (Service, error) {
 	for _, serviceEntry := range serviceEntries {
-
-		var wantVersion semver.Range
-		var err error
-
-		options.Version = strings.Replace(options.Version, "*", "x", -1)
-
-		if strings.HasPrefix(options.Version, "^") {
-			ver, err := semver.ParseTolerant(options.Version[1:])
-			if err == nil {
-				var verNext = ver
-				verNext.Major++
-				wantVersion, err = semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
-			} else {
-				return Service{}, err
-			}
-		} else if strings.HasPrefix(options.Version, "~") {
-			ver, err := semver.ParseTolerant(options.Version[1:])
-			if err == nil {
-				var verNext = ver
-				verNext.Minor++
-				wantVersion, err = semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
-			} else {
-				return Service{}, err
-			}
-		} else {
-			wantVersion, err = semver.ParseRange(options.Version)
-		}
-
-		if wantVersion == nil || err != nil {
-			return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
-		}
-
 		var foundService = false
 		for _, tag := range serviceEntry.Service.Tags {
 			if strings.HasPrefix(tag, "version") {
@@ -301,13 +296,17 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 						break
 					}
 				} else {
-					d.logger.Warning("Semantic version parsing failed for: %s, error: %s", t[1], err.Error())
+					d.logger.Warning("semver parsing failed for: %s, error: %s", t[1], err.Error())
 				}
 			}
 		}
 
 		if foundService {
+			var addr string
+			var port int
+
 			addr = serviceEntry.Service.Address
+			// if address is not set, it's equal to node's address
 			if addr == "" {
 				addr = serviceEntry.Node.Address
 			}
