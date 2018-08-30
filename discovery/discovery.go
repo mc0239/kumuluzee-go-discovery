@@ -5,8 +5,6 @@ import (
 	"github.com/mc0239/logm"
 )
 
-var conf config.Util
-
 // Options struct is used when instantiating a new Util.
 type Options struct {
 	// Additional configuration source to connect to. Possible values are: "consul"
@@ -82,15 +80,13 @@ func New(options Options) Util {
 
 	lgr := logm.New("Kumuluz-discovery")
 
-	conf = config.NewUtil(config.Options{
-		ConfigPath: options.ConfigPath,
-		LogLevel:   logm.LvlWarning,
-	})
-
 	var src discoverySource
 
 	if options.Extension == "consul" {
-		src = initConsulDiscoverySource(conf, &lgr) // TODO should actually pass file source
+		src = initConsulDiscoverySource(config.Options{
+			ConfigPath: options.ConfigPath,
+			LogLevel:   logm.LvlWarning,
+		}, &lgr) // TODO should actually pass file source
 	} else if options.Extension == "etcd" {
 		// TODO:
 	} else {

@@ -19,6 +19,8 @@ type consulDiscoverySource struct {
 	startRetryDelay int64
 	maxRetryDelay   int64
 
+	configOptions config.Options
+
 	logger               *logm.Logm
 	registerableServices []registerableService
 }
@@ -33,40 +35,64 @@ type registerableService struct {
 	name       string
 	versionTag string
 
-	options *RegisterOptions
+	singleton bool
+
+	options *registerConfiguration
 }
 
-func initConsulDiscoverySource(config config.Util, logger *logm.Logm) discoverySource {
+type registerConfiguration struct {
+	Name   string
+	Server struct {
+		HTTP struct {
+			Port    int
+			Address string
+		} `config:"http"`
+	}
+	Env struct {
+		Name string
+	}
+	Version   string
+	Discovery struct {
+		TTL          int64 `config:"ttl"`
+		PingInterval int64 `config:"ping-interval"`
+	}
+}
+
+func initConsulDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
 	logger.Verbose("Initializing ConsulDiscoverySource")
 	var d consulDiscoverySource
+
 	d.logger = logger
+	d.configOptions = options
 
-	clientConfig := api.DefaultConfig()
+	consulClientConfig := api.DefaultConfig()
 
-	if addr, ok := config.GetString("kumuluzee.config.consul.hosts"); ok {
-		clientConfig.Address = addr
+	conf := config.NewUtil(options)
+
+	if addr, ok := conf.GetString("kumuluzee.config.consul.hosts"); ok {
+		consulClientConfig.Address = addr
 	}
 
-	startRetryDelay, ok := config.Get("kumuluzee.config.start-retry-delay-ms").(float64)
+	startRetryDelay, ok := conf.Get("kumuluzee.config.start-retry-delay-ms").(float64)
 	if !ok {
 		logger.Warning("Failed to assert value kumuluzee.config.start-retry-delay-ms as float64. Using default value 500.")
 		startRetryDelay = 500
 	}
 	d.startRetryDelay = int64(startRetryDelay)
 
-	maxRetryDelay, ok := config.Get("kumuluzee.config.max-retry-delay-ms").(float64)
+	maxRetryDelay, ok := conf.Get("kumuluzee.config.max-retry-delay-ms").(float64)
 	if !ok {
 		logger.Warning("Failed to assert value kumuluzee.config.max-retry-delay-ms as float64. Using default value 900000.")
 		maxRetryDelay = 900000
 	}
 	d.maxRetryDelay = int64(maxRetryDelay)
 
-	client, err := api.NewClient(clientConfig)
+	client, err := api.NewClient(consulClientConfig)
 	if err != nil {
 		logger.Error("Failed to create Consul client: %s", err.Error())
 	}
 
-	logger.Info("Consul client address set to %s", clientConfig.Address)
+	logger.Info("Consul client address set to %s", consulClientConfig.Address)
 
 	d.client = client
 
@@ -75,67 +101,54 @@ func initConsulDiscoverySource(config config.Util, logger *logm.Logm) discoveryS
 
 func (d consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 
+	// Load default values
+	regconf := registerConfiguration{}
+	regconf.Server.HTTP.Port = 80 // TODO: default port to register?
+	regconf.Env.Name = "dev"
+	regconf.Version = "1.0.0"
+	regconf.Discovery.TTL = 30
+	regconf.Discovery.PingInterval = 20
+
+	// Load from configuration file, overriding defaults
+	config.NewBundle("kumuluzee", &regconf, d.configOptions)
+
+	// Load from RegisterOptions, override file configuration
+	if options.Value != "" {
+		regconf.Name = options.Value
+	}
+	if options.Environment != "" {
+		regconf.Env.Name = options.Environment
+	}
+	if options.Version != "" {
+		regconf.Version = options.Version
+	}
+	if options.TTL != 0 {
+		regconf.Discovery.TTL = options.TTL
+	}
+	if options.PingInterval != 0 {
+		regconf.Discovery.PingInterval = options.PingInterval
+	}
+
+	//d.logger.Info("after bundling: %v", regconf)
+
 	regService := registerableService{
-		options: &options,
+		options:   &regconf,
+		singleton: options.Singleton,
 	}
 
 	// TODO: at some point, unregistered services should be removed from array!
 	d.registerableServices = append(d.registerableServices, regService)
-
-	// if * exists in config, override value in options
-	if name, ok := conf.GetString("kumuluzee.name"); ok {
-		regService.options.Value = name
-	}
-
-	if port, ok := conf.GetFloat("kumuluzee.server.http.port"); ok {
-		regService.port = int(port)
-	} else {
-		regService.port = 80 // TODO: default port to register?
-	}
-
-	if addr, ok := conf.GetString("kumuluzee.server.http.address"); ok {
-		regService.address = addr
-	}
-
-	if env, ok := conf.GetString("kumuluzee.env.name"); ok {
-		regService.options.Environment = env
-	}
-	if regService.options.Environment == "" {
-		regService.options.Environment = "dev"
-	}
-
-	if ver, ok := conf.GetString("kumuluzee.version"); ok {
-		regService.options.Version = ver
-	}
-	if regService.options.Version == "" {
-		regService.options.Version = "1.0.0"
-	}
-
-	if ttl, ok := conf.GetInt("kumuluzee.discovery.ttl"); ok {
-		regService.options.TTL = int64(ttl)
-	}
-	if regService.options.TTL == 0 {
-		regService.options.TTL = 30
-	}
-
-	if pingInterval, ok := conf.GetInt("kumuluzee.discovery.ping-interval"); ok {
-		regService.options.PingInterval = int64(pingInterval)
-	}
-	if regService.options.PingInterval == 0 {
-		regService.options.PingInterval = 20
-	}
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
 		d.logger.Error(fmt.Sprintf(err.Error()))
 	}
 
-	regService.id = regService.options.Value + "-" + uuid4.String()
-	regService.name = regService.options.Environment + "-" + regService.options.Value
+	regService.id = regService.options.Name + "-" + uuid4.String()
+	regService.name = regService.options.Env.Name + "-" + regService.options.Name
 	regService.versionTag = "version=" + regService.options.Version
 
 	d.register(&regService, d.startRetryDelay)
-
 	go d.checkIn(&regService, d.startRetryDelay)
 
 	return regService.id, nil
@@ -145,7 +158,7 @@ func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) boo
 	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
 
 	if err != nil {
-		d.logger.Error(fmt.Sprintf("%s", err.Error()))
+		d.logger.Error(err.Error())
 		return false
 	}
 
@@ -161,7 +174,7 @@ func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) boo
 }
 
 func (d consulDiscoverySource) register(reg *registerableService, retryDelay int64) {
-	if isRegistered := d.isServiceRegistered(reg); isRegistered && reg.options.Singleton {
+	if isRegistered := d.isServiceRegistered(reg); isRegistered && reg.singleton {
 		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
 		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.address, reg.port)
@@ -173,7 +186,7 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 			Tags: []string{"<service protocol>", reg.versionTag},
 			Check: &api.AgentServiceCheck{
 				CheckID: "check-" + reg.id,
-				TTL:     strconv.FormatInt(reg.options.TTL, 10) + "s",
+				TTL:     strconv.FormatInt(reg.options.Discovery.TTL, 10) + "s",
 				DeregisterCriticalServiceAfter: strconv.FormatInt(10, 10) + "s",
 			},
 		}
@@ -222,7 +235,7 @@ func (d consulDiscoverySource) checkIn(reg *registerableService, retryDelay int6
 		return
 	}
 
-	time.Sleep(time.Duration(reg.options.PingInterval) * time.Second)
+	time.Sleep(time.Duration(reg.options.Discovery.PingInterval) * time.Second)
 	d.checkIn(reg, d.startRetryDelay)
 	return
 }
