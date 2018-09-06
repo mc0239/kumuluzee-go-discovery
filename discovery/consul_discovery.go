@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -282,8 +283,8 @@ func (d consulDiscoverySource) parseVersion(version string) (semver.Range, error
 }
 
 func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (Service, error) {
-	for _, serviceEntry := range serviceEntries {
-		var foundService = false
+	var foundServiceIndexes []int
+	for index, serviceEntry := range serviceEntries {
 		for _, tag := range serviceEntry.Service.Tags {
 			if strings.HasPrefix(tag, "version") {
 				t := strings.Split(tag, "=")
@@ -292,34 +293,37 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 				if err == nil {
 					// check if gotVersion is in wantVersion's range
 					if wantVersion(gotVersion) {
-						foundService = true
-						break
+						foundServiceIndexes = append(foundServiceIndexes, index)
 					}
 				} else {
 					d.logger.Warning("semver parsing failed for: %s, error: %s", t[1], err.Error())
 				}
 			}
 		}
-
-		if foundService {
-			var addr string
-			var port int
-
-			addr = serviceEntry.Service.Address
-			// if address is not set, it's equal to node's address
-			if addr == "" {
-				addr = serviceEntry.Node.Address
-			}
-			port = serviceEntry.Service.Port
-
-			d.logger.Verbose("Found service, address=%s port=%d", addr, port)
-
-			return Service{
-				Address: addr,
-				Port:    port,
-			}, nil
-		}
 	}
 
-	return Service{}, fmt.Errorf("Service discovery failed: No services for given query") // TODO: check if really
+	if len(foundServiceIndexes) > 0 {
+		var addr string
+		var port int
+
+		randomIndex := rand.Intn(len(foundServiceIndexes))
+
+		service := serviceEntries[foundServiceIndexes[randomIndex]]
+
+		addr = service.Service.Address
+		// if address is not set, it's equal to node's address
+		if addr == "" {
+			addr = service.Node.Address
+		}
+		port = service.Service.Port
+
+		d.logger.Verbose("Found service, address=%s port=%d", addr, port)
+
+		return Service{
+			Address: addr,
+			Port:    port,
+		}, nil
+	} else {
+		return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
+	}
 }
