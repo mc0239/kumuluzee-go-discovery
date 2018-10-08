@@ -83,7 +83,7 @@ func New(options Options) Util {
 	var src discoverySource
 
 	if options.Extension == "consul" {
-		src = initConsulDiscoverySource(config.Options{
+		src = newConsulDiscoverySource(config.Options{
 			ConfigPath: options.ConfigPath,
 			LogLevel:   logm.LvlWarning,
 		}, &lgr) // TODO should actually pass file source

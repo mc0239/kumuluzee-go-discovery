@@ -22,8 +22,8 @@ type consulDiscoverySource struct {
 
 	configOptions config.Options
 
-	logger               *logm.Logm
-	registerableServices []registerableService
+	logger              *logm.Logm
+	registerableService registerableService
 }
 
 type registerableService struct {
@@ -56,86 +56,41 @@ type registerConfiguration struct {
 	}
 }
 
-func initConsulDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
-	logger.Verbose("Initializing ConsulDiscoverySource")
+func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
 	var d consulDiscoverySource
-
+	logger.Verbose("Initializing Consul discovery source")
 	d.logger = logger
+
 	d.configOptions = options
-
-	consulClientConfig := api.DefaultConfig()
-
 	conf := config.NewUtil(options)
 
+	startRD, maxRD := getRetryDelays(conf)
+	d.startRetryDelay = startRD
+	d.maxRetryDelay = maxRD
+	logger.Verbose("start-retry-delay-ms=%d, max-retry-delay-ms=%d", d.startRetryDelay, d.maxRetryDelay)
+
+	var consulAddress string
 	if addr, ok := conf.GetString("kumuluzee.config.consul.hosts"); ok {
-		consulClientConfig.Address = addr
+		consulAddress = addr
 	}
-
-	startRetryDelay, ok := conf.Get("kumuluzee.config.start-retry-delay-ms").(float64)
-	if !ok {
-		logger.Warning("Failed to assert value kumuluzee.config.start-retry-delay-ms as float64. Using default value 500.")
-		startRetryDelay = 500
-	}
-	d.startRetryDelay = int64(startRetryDelay)
-
-	maxRetryDelay, ok := conf.Get("kumuluzee.config.max-retry-delay-ms").(float64)
-	if !ok {
-		logger.Warning("Failed to assert value kumuluzee.config.max-retry-delay-ms as float64. Using default value 900000.")
-		maxRetryDelay = 900000
-	}
-	d.maxRetryDelay = int64(maxRetryDelay)
-
-	client, err := api.NewClient(consulClientConfig)
-	if err != nil {
+	if client, err := createConsulClient(consulAddress); err == nil {
+		logger.Info("Consul client address set to %v", consulAddress)
+		d.client = client
+	} else {
 		logger.Error("Failed to create Consul client: %s", err.Error())
 	}
-
-	logger.Info("Consul client address set to %s", consulClientConfig.Address)
-
-	d.client = client
 
 	return d
 }
 
 func (d consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
-
-	// Load default values
-	regconf := registerConfiguration{}
-	regconf.Server.HTTP.Port = 80 // TODO: default port to register?
-	regconf.Env.Name = "dev"
-	regconf.Version = "1.0.0"
-	regconf.Discovery.TTL = 30
-	regconf.Discovery.PingInterval = 20
-
-	// Load from configuration file, overriding defaults
-	config.NewBundle("kumuluzee", &regconf, d.configOptions)
-
-	// Load from RegisterOptions, override file configuration
-	if options.Value != "" {
-		regconf.Name = options.Value
-	}
-	if options.Environment != "" {
-		regconf.Env.Name = options.Environment
-	}
-	if options.Version != "" {
-		regconf.Version = options.Version
-	}
-	if options.TTL != 0 {
-		regconf.Discovery.TTL = options.TTL
-	}
-	if options.PingInterval != 0 {
-		regconf.Discovery.PingInterval = options.PingInterval
-	}
-
-	//d.logger.Info("after bundling: %v", regconf)
-
+	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
 	regService := registerableService{
 		options:   &regconf,
 		singleton: options.Singleton,
 	}
 
-	// TODO: at some point, unregistered services should be removed from array!
-	d.registerableServices = append(d.registerableServices, regService)
+	d.registerableService = regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
@@ -323,7 +278,20 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 			Address: addr,
 			Port:    port,
 		}, nil
-	} else {
-		return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
 	}
+
+	return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
+}
+
+// functions that aren't configSource methods or etcdCondigSource methods
+
+func createConsulClient(address string) (*api.Client, error) {
+	clientConfig := api.DefaultConfig()
+	clientConfig.Address = address
+
+	client, err := api.NewClient(clientConfig)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
