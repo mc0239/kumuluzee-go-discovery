@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"strings"
 
@@ -58,32 +59,51 @@ func (d etcdDiscoveryService) RegisterService(options RegisterOptions) (serviceI
 
 func (d etcdDiscoveryService) DiscoverService(options DiscoverOptions) (Service, error) {
 
-	// TODO ACCESSTYPE?
 	kvClient := client.NewKeysAPI(*d.client)
-	kvDir, err := kvClient.Get(context.Background(), "environments/dev/services/customer-service/1.0.0/instances/", nil)
+
+	kvPath := fmt.Sprintf("environments/%s/services/%s/%s/instances/", options.Environment, options.Value, options.Version)
+	kvDir, err := kvClient.Get(context.Background(), kvPath, nil)
 	if err != nil {
 		return Service{}, err
 	}
-	for _, n := range kvDir.Node.Nodes {
-		inst, err := kvClient.Get(context.Background(), n.Key, nil)
-		if err != nil {
-			return Service{}, err
+
+	randomIndex := rand.Intn(kvDir.Node.Nodes.Len())
+	randomNode := kvDir.Node.Nodes[randomIndex]
+
+	instance, err := kvClient.Get(context.Background(), randomNode.Key, nil)
+	if err != nil {
+		return Service{}, err
+	}
+
+	for _, node := range instance.Node.Nodes {
+		var keySuffix string
+		switch options.AccessType {
+		case "gateway":
+			keySuffix = "gatewayUrl"
+			break
+		case "direct":
+			keySuffix = "url"
+			break
+		default:
+			keySuffix = "gatewayUrl"
+			d.logger.Warning("Invalid AccessType specified, using gateway")
+			break
 		}
-		for _, n2 := range inst.Node.Nodes {
-			fmt.Printf("key=%v value=%v", n2.Key, n2.Value)
-			if strings.HasSuffix(n2.Key, "url") {
-				surl, err := url.Parse(n2.Value)
-				if err != nil {
-					return Service{}, err
-				}
-				print("addr=%s port=%s", surl.Hostname(), surl.Port())
-				return Service{
-					Address: surl.Hostname(),
-					Port:    surl.Port(),
-				}, nil
+
+		// fmt.Printf("key=%v value=%v", node.Key, node.Value)
+		if strings.HasSuffix(node.Key, keySuffix) {
+			serviceURL, err := url.Parse(node.Value)
+			if err != nil {
+				return Service{}, err
 			}
+			// print("addr=%s port=%s", serviceURL.Hostname(), serviceURL.Port())
+			return Service{
+				Address: serviceURL.Hostname(),
+				Port:    serviceURL.Port(),
+			}, nil
 		}
 	}
+
 	return Service{}, fmt.Errorf("No service found")
 }
 

@@ -53,10 +53,12 @@ type DiscoverOptions struct {
 	// If value is not specified and key in configuration does not exists, value defaults to 'dev'.
 	Environment string
 	// Version of the service to discover.
-	// Uses semantic versioning?
+	// Supported values are semantic version (semver) parseable versions/version ranges.
 	// Default value is "*", which resolves to highest deployed version.
 	Version string
-	// TODO
+	// AccessType defines, which URL gets injected.
+	// Supported values are "gateway" and "direct".
+	// Default value is "gateway".
 	AccessType string
 }
 
