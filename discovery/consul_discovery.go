@@ -19,6 +19,7 @@ type consulDiscoverySource struct {
 
 	startRetryDelay int64
 	maxRetryDelay   int64
+	protocol        string
 
 	configOptions config.Options
 
@@ -78,6 +79,12 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 		d.client = client
 	} else {
 		logger.Error("Failed to create Consul client: %s", err.Error())
+	}
+
+	if p, ok := conf.GetString("kumuluzee.discovery.consul.protocol"); ok {
+		d.protocol = p
+	} else {
+		d.protocol = "http"
 	}
 
 	return d
@@ -158,7 +165,7 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 			Port: reg.options.Server.HTTP.Port,
 			ID:   reg.id,
 			Name: reg.name,
-			Tags: []string{"<service protocol>", reg.versionTag},
+			Tags: []string{d.protocol, reg.versionTag},
 			Check: &api.AgentServiceCheck{
 				CheckID: "check-" + reg.id,
 				TTL:     strconv.FormatInt(reg.options.Discovery.TTL, 10) + "s",
@@ -254,7 +261,7 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 
 		return Service{
 			Address: addr,
-			Port:    string(port),
+			Port:    strconv.Itoa(port),
 		}, nil
 	}
 
