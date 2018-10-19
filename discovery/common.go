@@ -1,6 +1,11 @@
 package discovery
 
-import "github.com/mc0239/kumuluzee-go-config/config"
+import (
+	"strings"
+
+	"github.com/blang/semver"
+	"github.com/mc0239/kumuluzee-go-config/config"
+)
 
 func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 	if sdl, ok := conf.GetInt("kumuluzee.config.start-retry-delay-ms"); ok {
@@ -48,4 +53,28 @@ func loadServiceRegisterConfiguration(confOptions config.Options, regOptions Reg
 	}
 
 	return
+}
+
+func parseVersion(version string) (semver.Range, error) {
+	version = strings.Replace(version, "*", "x", -1)
+
+	if strings.HasPrefix(version, "^") {
+		ver, err := semver.ParseTolerant(version[1:])
+		if err == nil {
+			var verNext = ver
+			verNext.Major++
+			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+		}
+		return nil, err
+	} else if strings.HasPrefix(version, "~") {
+		ver, err := semver.ParseTolerant(version[1:])
+		if err == nil {
+			var verNext = ver
+			verNext.Minor++
+			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
+		}
+		return nil, err
+	} else {
+		return semver.ParseRange(version)
+	}
 }

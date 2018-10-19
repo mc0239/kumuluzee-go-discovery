@@ -44,6 +44,7 @@ type RegisterOptions struct {
 	Singleton bool
 }
 
+// DiscoverOptions is used when discovering services
 type DiscoverOptions struct {
 	// Name of the service to discover.
 	Value string
@@ -68,7 +69,7 @@ type Util struct {
 
 type Service struct {
 	Address string
-	Port    int
+	Port    string
 }
 
 type discoverySource interface {
@@ -76,6 +77,7 @@ type discoverySource interface {
 	DiscoverService(options DiscoverOptions) (Service, error)
 }
 
+// New instantiates Util struct with initialized service discovery
 func New(options Options) Util {
 
 	lgr := logm.New("Kumuluz-discovery")
@@ -86,11 +88,14 @@ func New(options Options) Util {
 		src = newConsulDiscoverySource(config.Options{
 			ConfigPath: options.ConfigPath,
 			LogLevel:   logm.LvlWarning,
-		}, &lgr) // TODO should actually pass file source
+		}, &lgr)
 	} else if options.Extension == "etcd" {
-		// TODO:
+		src = newEtcdDiscoverySource(config.Options{
+			ConfigPath: options.ConfigPath,
+			LogLevel:   logm.LvlWarning,
+		}, &lgr)
 	} else {
-		// TODO: invalid ext
+		lgr.Error("Specified discovery source extension is invalid.")
 	}
 
 	k := Util{
@@ -101,10 +106,12 @@ func New(options Options) Util {
 	return k
 }
 
+// RegisterService registers service using service discovery client with given RegisterOptions
 func (d Util) RegisterService(options RegisterOptions) (string, error) {
 	return d.discoverySource.RegisterService(options)
 }
 
+// DiscoverService discovery services using service discovery client with given RegisterOptions
 func (d Util) DiscoverService(options DiscoverOptions) (Service, error) {
 	return d.discoverySource.DiscoverService(options)
 }

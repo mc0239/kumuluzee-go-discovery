@@ -70,7 +70,7 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 	logger.Verbose("start-retry-delay-ms=%d, max-retry-delay-ms=%d", d.startRetryDelay, d.maxRetryDelay)
 
 	var consulAddress string
-	if addr, ok := conf.GetString("kumuluzee.config.consul.hosts"); ok {
+	if addr, ok := conf.GetString("kumuluzee.discovery.consul.hosts"); ok {
 		consulAddress = addr
 	}
 	if client, err := createConsulClient(consulAddress); err == nil {
@@ -106,6 +106,28 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 
 	return regService.id, nil
 }
+
+func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
+
+	// TODO: ACCESSTYPE?
+	queryServiceName := options.Environment + "-" + options.Value
+	serviceEntries, _, err := d.client.Health().Service(queryServiceName, "", true, nil)
+	if err != nil {
+		d.logger.Error("Service discovery failed: %s", err.Error())
+		return Service{}, fmt.Errorf("Service discovery failed: %s", err.Error())
+	}
+
+	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
+
+	versionRange, err := parseVersion(options.Version)
+	if err != nil {
+		return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
+	}
+
+	return d.extractService(serviceEntries, versionRange)
+}
+
+// functions that aren't configSource methods
 
 func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) bool {
 	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
@@ -193,50 +215,6 @@ func (d consulDiscoverySource) checkIn(reg *registerableService, retryDelay int6
 	return
 }
 
-func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
-
-	// TODO: ACCESSTYPE?
-	queryServiceName := options.Environment + "-" + options.Value
-	serviceEntries, _, err := d.client.Health().Service(queryServiceName, "", true, nil)
-	if err != nil {
-		d.logger.Error("Service discovery failed: %s", err.Error())
-		return Service{}, fmt.Errorf("Service discovery failed: %s", err.Error())
-	}
-
-	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
-
-	versionRange, err := d.parseVersion(options.Version)
-	if err != nil {
-		return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
-	}
-
-	return d.extractService(serviceEntries, versionRange)
-}
-
-func (d consulDiscoverySource) parseVersion(version string) (semver.Range, error) {
-	version = strings.Replace(version, "*", "x", -1)
-
-	if strings.HasPrefix(version, "^") {
-		ver, err := semver.ParseTolerant(version[1:])
-		if err == nil {
-			var verNext = ver
-			verNext.Major++
-			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
-		}
-		return nil, err
-	} else if strings.HasPrefix(version, "~") {
-		ver, err := semver.ParseTolerant(version[1:])
-		if err == nil {
-			var verNext = ver
-			verNext.Minor++
-			return semver.ParseRange(">=" + ver.String() + " <" + verNext.String())
-		}
-		return nil, err
-	} else {
-		return semver.ParseRange(version)
-	}
-}
-
 func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (Service, error) {
 	var foundServiceIndexes []int
 	for index, serviceEntry := range serviceEntries {
@@ -276,14 +254,14 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 
 		return Service{
 			Address: addr,
-			Port:    port,
+			Port:    string(port),
 		}, nil
 	}
 
 	return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
 }
 
-// functions that aren't configSource methods or etcdCondigSource methods
+// functions that aren't configSource methods or consulCondigSource methods
 
 func createConsulClient(address string) (*api.Client, error) {
 	clientConfig := api.DefaultConfig()
