@@ -23,8 +23,9 @@ type consulDiscoverySource struct {
 
 	configOptions config.Options
 
-	logger              *logm.Logm
-	registerableService registerableService
+	logger *logm.Logm
+
+	registerableService *registerableService
 }
 
 type registerableService struct {
@@ -97,19 +98,19 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 		singleton: options.Singleton,
 	}
 
-	d.registerableService = regService
+	d.registerableService = &regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
-		d.logger.Error(fmt.Sprintf(err.Error()))
+		d.logger.Error(err.Error())
 	}
 
 	regService.id = regService.options.Name + "-" + uuid4.String()
 	regService.name = regService.options.Env.Name + "-" + regService.options.Name
 	regService.versionTag = "version=" + regService.options.Version
 
-	d.register(&regService, d.startRetryDelay)
-	go d.checkIn(&regService, d.startRetryDelay)
+	d.register(d.startRetryDelay)
+	go d.ttlUpdate(d.startRetryDelay)
 
 	return regService.id, nil
 }
@@ -136,7 +137,8 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 
 // functions that aren't configSource methods
 
-func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) bool {
+func (d consulDiscoverySource) isServiceRegistered() bool {
+	reg := d.registerableService
 	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
 
 	if err != nil {
@@ -155,8 +157,9 @@ func (d consulDiscoverySource) isServiceRegistered(reg *registerableService) boo
 	return false
 }
 
-func (d consulDiscoverySource) register(reg *registerableService, retryDelay int64) {
-	if isRegistered := d.isServiceRegistered(reg); isRegistered && reg.singleton {
+func (d consulDiscoverySource) register(retryDelay int64) {
+	reg := d.registerableService
+	if isRegistered := d.isServiceRegistered(); isRegistered && reg.singleton {
 		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
 		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.options.Server.HTTP.Address, reg.options.Server.HTTP.Port)
@@ -189,7 +192,7 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 			if newRetryDelay > d.maxRetryDelay {
 				newRetryDelay = d.maxRetryDelay
 			}
-			d.register(reg, newRetryDelay)
+			d.register(newRetryDelay)
 			return
 		}
 
@@ -198,7 +201,8 @@ func (d consulDiscoverySource) register(reg *registerableService, retryDelay int
 	}
 }
 
-func (d consulDiscoverySource) checkIn(reg *registerableService, retryDelay int64) {
+func (d consulDiscoverySource) ttlUpdate(retryDelay int64) {
+	reg := d.registerableService
 	d.logger.Verbose("Updating TTL for service %s", reg.id)
 
 	err := d.client.Agent().UpdateTTL("check-"+reg.id, "serviceid="+reg.id+" time="+time.Now().Format("2006-01-02 15:04:05"), "passing")
@@ -213,12 +217,12 @@ func (d consulDiscoverySource) checkIn(reg *registerableService, retryDelay int6
 		if newRetryDelay > d.maxRetryDelay {
 			newRetryDelay = d.maxRetryDelay
 		}
-		d.checkIn(reg, newRetryDelay)
+		d.ttlUpdate(newRetryDelay)
 		return
 	}
 
 	time.Sleep(time.Duration(reg.options.Discovery.PingInterval) * time.Second)
-	d.checkIn(reg, d.startRetryDelay)
+	d.ttlUpdate(d.startRetryDelay)
 	return
 }
 
