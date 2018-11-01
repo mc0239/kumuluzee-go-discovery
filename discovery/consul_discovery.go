@@ -96,23 +96,88 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 }
 
 func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
+	fillDefaultDiscoverOptions(&options)
 
-	// TODO: ACCESSTYPE?
 	queryServiceName := options.Environment + "-" + options.Value
 	serviceEntries, _, err := d.client.Health().Service(queryServiceName, "", true, nil)
 	if err != nil {
-		d.logger.Error("Service discovery failed: %s", err.Error())
-		return "", fmt.Errorf("Service discovery failed: %s", err.Error())
+		d.logger.Warning("Service discovery failed: %s", err.Error())
+		return "", err
 	}
 
-	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
+	// ----- extract all services of all versions of given environment and name
+	var discoveredInstances []discoveredService
+	for _, serviceEntry := range serviceEntries {
+		discoveredInstance := discoveredService{}
+		discoveredInstance.id = serviceEntry.Service.ID
 
-	versionRange, err := parseVersion(options.Version)
+		versionOk := false
+		protocol := "http"
+		for _, tag := range serviceEntry.Service.Tags {
+			if strings.HasPrefix(tag, "version") {
+				t := strings.Split(tag, "=")
+				version, err := semver.ParseTolerant(t[1])
+				if err != nil {
+					d.logger.Warning("semver parsing failed for: %s, error: %s", t[1], err.Error())
+					versionOk = false
+					break
+				}
+				discoveredInstance.version = version
+				versionOk = true
+			} else if tag == "https" {
+				protocol = "https"
+			}
+		}
+		if !versionOk {
+			continue // ignore this service, can't parse version
+		}
+
+		var addr string
+		if a := serviceEntry.Service.Address; a != "" {
+			addr = a
+		} else {
+			// if address is not set, it's equal to node's address
+			addr = serviceEntry.Node.Address
+		}
+
+		discoveredInstance.directURL = fmt.Sprintf("%s://%s:%d",
+			protocol,
+			addr,
+			serviceEntry.Service.Port)
+
+		// get gateway url
+		kv := d.client.KV()
+		key := fmt.Sprintf("/environments/%s/services/%s/%s/gatewayUrl",
+			options.Environment, options.Value, discoveredInstance.version.String())
+
+		pair, _, err := kv.Get(key, nil)
+		if err == nil && pair != nil {
+			discoveredInstance.gatewayURL = string(pair.Value)
+		}
+
+		discoveredInstances = append(discoveredInstances, discoveredInstance)
+	}
+	// -----
+
+	wantVersion, err := parseVersion(options.Version)
 	if err != nil {
 		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
 	}
 
-	return d.extractService(serviceEntries, versionRange)
+	// pick a random service instance from registered instances that match version
+	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
+	if len(instances) == 0 {
+		return "", fmt.Errorf("No service found (no matching version)")
+	}
+
+	randomInstance := instances[rand.Intn(len(instances))]
+	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
+		return randomInstance.gatewayURL, nil
+	} else if randomInstance.directURL != "" {
+		return randomInstance.directURL, nil
+	} else {
+		return "", fmt.Errorf("No service found (no service with URL)")
+	}
 }
 
 // functions that aren't discoverySource methods
@@ -219,50 +284,6 @@ func (d consulDiscoverySource) isServiceRegistered() bool {
 	}
 
 	return len(serviceEntries) > 0
-}
-
-func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (string, error) {
-	var foundServiceIndexes []int
-	for index, serviceEntry := range serviceEntries {
-		for _, tag := range serviceEntry.Service.Tags {
-			if strings.HasPrefix(tag, "version") {
-				t := strings.Split(tag, "=")
-
-				gotVersion, err := semver.ParseTolerant(t[1])
-				if err == nil {
-					// check if gotVersion is in wantVersion's range
-					if wantVersion(gotVersion) {
-						foundServiceIndexes = append(foundServiceIndexes, index)
-					}
-				} else {
-					d.logger.Warning("semver parsing failed for: %s, error: %s", t[1], err.Error())
-				}
-			}
-		}
-	}
-
-	if len(foundServiceIndexes) > 0 {
-		var addr string
-		var port int
-
-		randomIndex := rand.Intn(len(foundServiceIndexes))
-
-		service := serviceEntries[foundServiceIndexes[randomIndex]]
-
-		addr = service.Service.Address
-		// if address is not set, it's equal to node's address
-		if addr == "" {
-			addr = service.Node.Address
-		}
-		port = service.Service.Port
-
-		d.logger.Verbose("Found service, address=%s port=%d", addr, port)
-
-		// TODO check if ok
-		return fmt.Sprintf("%s:%d", addr, port), nil
-	}
-
-	return "", fmt.Errorf("Service discovery failed: No services for given query")
 }
 
 // functions that aren't discoverySource methods or consulDiscoverySource methods
