@@ -25,7 +25,19 @@ type etcdDiscoverySource struct {
 
 	logger *logm.Logm
 
-	registerableService *registerableService
+	serviceInstance *etcdServiceInstance
+}
+
+type etcdServiceInstance struct {
+	isRegistered bool
+
+	id         string
+	name       string
+	versionTag string
+
+	singleton bool
+
+	options *registerConfiguration
 }
 
 func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
@@ -57,12 +69,13 @@ func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discovery
 
 func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
-	regService := registerableService{
+
+	regService := etcdServiceInstance{
 		options:   &regconf,
 		singleton: options.Singleton,
 	}
 
-	d.registerableService = &regService
+	d.serviceInstance = &regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
@@ -137,7 +150,7 @@ func (d etcdDiscoverySource) isServiceRegistered() bool {
 }
 
 func (d etcdDiscoverySource) register(retryDelay int64) {
-	reg := d.registerableService
+	reg := d.serviceInstance
 	if isRegistered := d.isServiceRegistered(); isRegistered && reg.singleton {
 		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
@@ -182,7 +195,7 @@ func (d etcdDiscoverySource) register(retryDelay int64) {
 }
 
 func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) {
-	reg := d.registerableService
+	reg := d.serviceInstance
 	d.logger.Verbose("Updating TTL for service %s", reg.id)
 
 	regkvPath := fmt.Sprintf("/environments/%s/services/%s/%s/instances/%s/url",

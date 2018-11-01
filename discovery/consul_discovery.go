@@ -14,6 +14,7 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+// holds consul client instance and configuration
 type consulDiscoverySource struct {
 	client *api.Client
 
@@ -25,10 +26,11 @@ type consulDiscoverySource struct {
 
 	logger *logm.Logm
 
-	registerableService *registerableService
+	serviceInstance *consulServiceInstance
 }
 
-type registerableService struct {
+// holds service instance configuration and state
+type consulServiceInstance struct {
 	isRegistered bool
 
 	id         string
@@ -40,6 +42,7 @@ type registerableService struct {
 	options *registerConfiguration
 }
 
+// configuration bundle for usage with kumuluzee config bundle
 type registerConfiguration struct {
 	Name   string
 	Server struct {
@@ -93,12 +96,12 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 
 func (d consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
-	regService := registerableService{
+	regService := consulServiceInstance{
 		options:   &regconf,
 		singleton: options.Singleton,
 	}
 
-	d.registerableService = &regService
+	d.serviceInstance = &regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
@@ -138,7 +141,7 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 // functions that aren't configSource methods
 
 func (d consulDiscoverySource) isServiceRegistered() bool {
-	reg := d.registerableService
+	reg := d.serviceInstance
 	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
 
 	if err != nil {
@@ -158,7 +161,7 @@ func (d consulDiscoverySource) isServiceRegistered() bool {
 }
 
 func (d consulDiscoverySource) register(retryDelay int64) {
-	reg := d.registerableService
+	reg := d.serviceInstance
 	if isRegistered := d.isServiceRegistered(); isRegistered && reg.singleton {
 		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
@@ -202,7 +205,7 @@ func (d consulDiscoverySource) register(retryDelay int64) {
 }
 
 func (d consulDiscoverySource) ttlUpdate(retryDelay int64) {
-	reg := d.registerableService
+	reg := d.serviceInstance
 	d.logger.Verbose("Updating TTL for service %s", reg.id)
 
 	err := d.client.Agent().UpdateTTL("check-"+reg.id, "serviceid="+reg.id+" time="+time.Now().Format("2006-01-02 15:04:05"), "passing")
