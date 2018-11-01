@@ -130,7 +130,7 @@ func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, e
 			version, err := semver.ParseTolerant(currentVersion)
 			if err != nil {
 				d.logger.Warning("semver parsing failed for: %s, error: %s", currentVersion, err.Error())
-				break
+				break // break out of this version, can't parse it
 			}
 			discoveredInstance.version = version
 

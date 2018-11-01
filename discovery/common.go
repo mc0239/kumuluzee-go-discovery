@@ -32,6 +32,7 @@ type discoveredService struct {
 	id         string
 	directURL  string
 	gatewayURL string
+	// TODO: containerURL ?
 }
 
 //
