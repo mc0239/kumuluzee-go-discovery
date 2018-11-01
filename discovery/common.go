@@ -7,6 +7,26 @@ import (
 	"github.com/mc0239/kumuluzee-go-config/config"
 )
 
+// configuration bundle for usage with kumuluzee config bundle
+type registerConfiguration struct {
+	Name   string
+	Server struct {
+		BaseURL string `config:"base-url"`
+		HTTP    struct {
+			Port    int
+			Address string
+		} `config:"http"`
+	}
+	Env struct {
+		Name string
+	}
+	Version   string
+	Discovery struct {
+		TTL          int64 `config:"ttl"`
+		PingInterval int64 `config:"ping-interval"`
+	}
+}
+
 func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 	if sdl, ok := conf.GetInt("kumuluzee.config.start-retry-delay-ms"); ok {
 		startRD = int64(sdl)
@@ -26,7 +46,7 @@ func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 func loadServiceRegisterConfiguration(confOptions config.Options, regOptions RegisterOptions) (regconf registerConfiguration) {
 	// Load default values
 	regconf = registerConfiguration{}
-	regconf.Server.HTTP.Port = 80 // TODO: default port to register?
+	regconf.Server.HTTP.Port = 9000
 	regconf.Env.Name = "dev"
 	regconf.Version = "1.0.0"
 	regconf.Discovery.TTL = 30

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,29 +14,30 @@ import (
 	"go.etcd.io/etcd/client"
 )
 
+// holds etcd client instance and configuration
 type etcdDiscoverySource struct {
-	client *client.Client
+	client   *client.Client
+	kvClient client.KeysAPI
 
 	startRetryDelay int64
 	maxRetryDelay   int64
 
-	configOptions config.Options
+	configOptions   config.Options         // passed when calling new...()
+	options         *registerConfiguration // loaded as config bundle
+	serviceInstance *etcdServiceInstance
 
 	logger *logm.Logm
-
-	serviceInstance *etcdServiceInstance
 }
 
+// holds service instance configuration and state
 type etcdServiceInstance struct {
 	isRegistered bool
 
 	id         string
-	name       string
-	versionTag string
+	etcdKeyDir string
+	serviceURL string
 
 	singleton bool
-
-	options *registerConfiguration
 }
 
 func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
@@ -53,51 +53,51 @@ func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discovery
 	d.maxRetryDelay = maxRD
 	logger.Verbose("start-retry-delay-ms=%d, max-retry-delay-ms=%d", d.startRetryDelay, d.maxRetryDelay)
 
-	var etcdAddress string
+	var etcdAddresses string
 	if addr, ok := conf.GetString("kumuluzee.discovery.etcd.hosts"); ok {
-		etcdAddress = addr
+		etcdAddresses = addr
 	}
-	if client, err := createEtcdClient(etcdAddress); err == nil {
-		logger.Info("etcd client address set to: %v", etcdAddress)
+	if client, err := createEtcdClient(etcdAddresses); err == nil {
+		logger.Info("etcd client addresses set to: %v", etcdAddresses)
 		d.client = client
 	} else {
 		logger.Error("Failed to create etcd client: %s", err.Error())
 	}
+
+	d.kvClient = client.NewKeysAPI(*d.client)
 
 	return d
 }
 
 func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
+	d.options = &regconf
 
-	regService := etcdServiceInstance{
-		options:   &regconf,
+	d.serviceInstance = &etcdServiceInstance{
 		singleton: options.Singleton,
 	}
-
-	d.serviceInstance = &regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
 		d.logger.Error(err.Error())
 	}
 
-	regService.id = uuid4.String()
-	regService.name = regService.options.Env.Name + "-" + regService.options.Name
-	regService.versionTag = "version=" + regService.options.Version
+	d.serviceInstance.id = uuid4.String()
 
-	d.register(d.startRetryDelay)
-	go d.ttlUpdate(d.startRetryDelay)
+	d.serviceInstance.etcdKeyDir = fmt.Sprintf("/environments/%s/services/%s/%s/instances/%s",
+		regconf.Env.Name, regconf.Name, regconf.Version, d.serviceInstance.id)
 
-	return regService.id, nil
+	go d.run(d.startRetryDelay)
+
+	return d.serviceInstance.id, nil
 }
 
 func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
 
-	kvClient := client.NewKeysAPI(*d.client)
+	kvPath := fmt.Sprintf("environments/%s/services/%s/%s/instances/",
+		options.Environment, options.Value, options.Version)
 
-	kvPath := fmt.Sprintf("environments/%s/services/%s/%s/instances/", options.Environment, options.Value, options.Version)
-	kvDir, err := kvClient.Get(context.Background(), kvPath, nil)
+	kvDir, err := d.kvClient.Get(context.Background(), kvPath, nil)
 	if err != nil {
 		return Service{}, err
 	}
@@ -105,12 +105,13 @@ func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (Service, 
 	randomIndex := rand.Intn(kvDir.Node.Nodes.Len())
 	randomNode := kvDir.Node.Nodes[randomIndex]
 
-	instance, err := kvClient.Get(context.Background(), randomNode.Key, nil)
+	instance, err := d.kvClient.Get(context.Background(), randomNode.Key, nil)
 	if err != nil {
 		return Service{}, err
 	}
 
 	for _, node := range instance.Node.Nodes {
+		// TODO: gateway, direct,  ???
 		var keySuffix string
 		switch options.AccessType {
 		case "gateway":
@@ -142,102 +143,148 @@ func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (Service, 
 	return Service{}, fmt.Errorf("No service found")
 }
 
-// functions that aren't configSource methods
+// functions that aren't discoverySource methods
 
-func (d etcdDiscoverySource) isServiceRegistered() bool {
-	// TODO
-	return false
-}
+// if service is not registered, performs registration. Otherwise perform ttl update
+func (d etcdDiscoverySource) run(retryDelay int64) {
 
-func (d etcdDiscoverySource) register(retryDelay int64) {
-	reg := d.serviceInstance
-	if isRegistered := d.isServiceRegistered(); isRegistered && reg.singleton {
-		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
+	var ok bool
+	if !d.serviceInstance.isRegistered {
+		ok = d.register(retryDelay)
+		if ok {
+			d.serviceInstance.isRegistered = true
+		}
 	} else {
-		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.options.Server.HTTP.Address, reg.options.Server.HTTP.Port)
-
-		regkvPath := fmt.Sprintf("/environments/%s/services/%s/%s/instances/%s/url",
-			reg.options.Env.Name, reg.options.Name, reg.options.Version, reg.id)
-
-		// TODO where is service address assumed from ?
-		serviceURL := reg.options.Server.HTTP.Address + ":" + string(reg.options.Server.HTTP.Port)
-
-		ttlDuration, err := time.ParseDuration(strconv.FormatInt(reg.options.Discovery.TTL, 10) + "s")
-		if err != nil {
-			d.logger.Warning("Failed to parse TTL duration, using default: 10 seconds")
-			ttlDuration = 10 * time.Second
+		ok = d.ttlUpdate(retryDelay)
+		if !ok {
+			d.serviceInstance.isRegistered = false
 		}
-
-		kvClient := client.NewKeysAPI(*d.client)
-		resp, err := kvClient.Set(context.Background(), regkvPath, serviceURL, &client.SetOptions{
-			TTL: ttlDuration,
-		})
-
-		d.logger.Info("resp?=%v", resp)
-
-		if err != nil {
-			d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
-			// sleep for current delay
-			time.Sleep(time.Duration(retryDelay) * time.Millisecond)
-
-			// exponentially extend retry delay, but keep it at most maxRetryDelay
-			newRetryDelay := retryDelay * 2
-			if newRetryDelay > d.maxRetryDelay {
-				newRetryDelay = d.maxRetryDelay
-			}
-			d.register(newRetryDelay)
-			return
-		}
-
-		d.logger.Info("Service registered, id=%s", reg.id)
-		reg.isRegistered = true
-	}
-}
-
-func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) {
-	reg := d.serviceInstance
-	d.logger.Verbose("Updating TTL for service %s", reg.id)
-
-	regkvPath := fmt.Sprintf("/environments/%s/services/%s/%s/instances/%s/url",
-		reg.options.Env.Name, reg.options.Name, reg.options.Version, reg.id)
-
-	ttlDuration, err := time.ParseDuration(strconv.FormatInt(reg.options.Discovery.TTL, 10) + "s")
-	if err != nil {
-		d.logger.Warning("Failed to parse TTL duration, using default: 10 seconds")
-		ttlDuration = 10 * time.Second
 	}
 
-	kvClient := client.NewKeysAPI(*d.client)
-	_, err = kvClient.Set(context.Background(), regkvPath, "", &client.SetOptions{
-		TTL:     ttlDuration,
-		Refresh: true,
-	})
-
-	if err != nil {
-		d.logger.Error("Updating TTL failed for service %s, error: %s, retry delay: %d ms", reg.id, err.Error(), retryDelay)
+	if !ok {
+		// Something went wrong with either registration or TTL update :(
 
 		// sleep for current delay
 		time.Sleep(time.Duration(retryDelay) * time.Millisecond)
-
 		// exponentially extend retry delay, but keep it at most maxRetryDelay
 		newRetryDelay := retryDelay * 2
 		if newRetryDelay > d.maxRetryDelay {
 			newRetryDelay = d.maxRetryDelay
 		}
-		d.ttlUpdate(newRetryDelay)
-		return
+		d.run(newRetryDelay)
+	} else {
+		// Everything is alright, either registration or TTL update was successful :)
+
+		time.Sleep(time.Duration(d.options.Discovery.PingInterval) * time.Second)
+		d.run(d.startRetryDelay)
 	}
 
-	time.Sleep(time.Duration(reg.options.Discovery.PingInterval) * time.Second)
-	d.ttlUpdate(d.startRetryDelay)
-	return
 }
 
-// functions that aren't configSource methods or etcdConfigSource methods
+func (d etcdDiscoverySource) register(retryDelay int64) bool {
+	inst := d.serviceInstance
 
-func createEtcdClient(address string) (*client.Client, error) {
+	if d.isServiceRegistered() && inst.singleton {
+		d.logger.Error("Service of this kind is already registered, not registering with options.singleton set to true")
+		return false
+	}
+
+	d.logger.Info("Registering service: id=%s address=%s port=%d", inst.id, d.options.Server.HTTP.Address, d.options.Server.HTTP.Port)
+
+	d.serviceInstance.serviceURL = d.options.Server.BaseURL
+	if d.serviceInstance.serviceURL == "" {
+		// TODO: if base-url not defined, assume URL from system network interface?
+		d.logger.Error("No base-url provided! Please provide base-url by setting a key kumuluzee.server.base-url in your configuration!")
+	}
+
+	// set TTL on instance directory
+	_, err := d.kvClient.Set(context.Background(),
+		d.serviceInstance.etcdKeyDir,
+		"",
+		&client.SetOptions{
+			TTL: time.Duration(d.options.Discovery.TTL) * time.Second,
+			Dir: true,
+		})
+	if err != nil {
+		d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
+		return false
+	}
+
+	_, err = d.kvClient.Set(context.Background(),
+		d.serviceInstance.etcdKeyDir+"/url",
+		d.serviceInstance.serviceURL,
+		nil)
+	if err != nil {
+		d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
+		return false
+	}
+
+	d.logger.Info("Service registered, id=%s", inst.id)
+	return true
+}
+
+func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
+	inst := d.serviceInstance
+	d.logger.Verbose("Updating TTL for service %s", inst.id)
+
+	_, err := d.kvClient.Set(context.Background(), inst.etcdKeyDir, "", &client.SetOptions{
+		TTL:       time.Duration(d.options.Discovery.TTL) * time.Second,
+		Dir:       true,
+		PrevExist: client.PrevExist,
+		Refresh:   true,
+	})
+
+	if err != nil {
+		d.logger.Error("Updating TTL failed for service %s, error: %s, retry delay: %d ms", inst.id, err.Error(), retryDelay)
+		return false
+	}
+
+	d.logger.Verbose("TTL update for service %s", inst.id)
+	return true
+}
+
+// returns true if there are any services of this kind registered
+func (d etcdDiscoverySource) isServiceRegistered() bool {
+	etcdKeyDir := fmt.Sprintf("/environments/%s/services/%s/%s/instances/",
+		d.options.Env.Name, d.options.Name, d.options.Version)
+
+	resp, err := d.kvClient.Get(context.Background(), etcdKeyDir, &client.GetOptions{
+		Recursive: true,
+	})
+
+	if err != nil {
+		d.logger.Warning("isServiceRegistered() failed: %s", err.Error())
+		return false
+	}
+
+	for _, instance := range resp.Node.Nodes {
+		var URL string
+		var isActive = true
+
+		for _, node := range instance.Nodes {
+			if strings.HasSuffix(node.Key, "url") {
+				URL = node.Value
+			}
+			if strings.HasSuffix(node.Key, "status") {
+				if node.Value == "disabled" {
+					isActive = false
+				}
+			}
+		}
+
+		if isActive && URL != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// functions that aren't discoverySource methods or etcdDiscoverySource methods
+
+func createEtcdClient(addresses string) (*client.Client, error) {
 	clientConfig := client.Config{
-		Endpoints: []string{address}, // TODO: split string in case of multiple hosts?
+		Endpoints: strings.Split(addresses, ","),
 	}
 
 	client, err := client.New(clientConfig)

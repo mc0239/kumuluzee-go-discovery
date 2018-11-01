@@ -42,25 +42,6 @@ type consulServiceInstance struct {
 	options *registerConfiguration
 }
 
-// configuration bundle for usage with kumuluzee config bundle
-type registerConfiguration struct {
-	Name   string
-	Server struct {
-		HTTP struct {
-			Port    int
-			Address string
-		} `config:"http"`
-	}
-	Env struct {
-		Name string
-	}
-	Version   string
-	Discovery struct {
-		TTL          int64 `config:"ttl"`
-		PingInterval int64 `config:"ping-interval"`
-	}
-}
-
 func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
 	var d consulDiscoverySource
 	logger.Verbose("Initializing Consul discovery source")
@@ -138,7 +119,7 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service
 	return d.extractService(serviceEntries, versionRange)
 }
 
-// functions that aren't configSource methods
+// functions that aren't discoverySource methods
 
 func (d consulDiscoverySource) isServiceRegistered() bool {
 	reg := d.serviceInstance
@@ -275,7 +256,7 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 	return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
 }
 
-// functions that aren't configSource methods or consulCondigSource methods
+// functions that aren't discoverySource methods or consulDiscoverySource methods
 
 func createConsulClient(address string) (*api.Client, error) {
 	clientConfig := api.DefaultConfig()
