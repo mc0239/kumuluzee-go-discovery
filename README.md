@@ -1,8 +1,6 @@
 # KumuluzEE Go Discovery
 
-Note: crossed content is work in progress.
-
-KumuluzEE Go Discovery is a service discovery library for the KumuluzEE microservice framework.  It is a Go  package based on a [KumuluzEE Discovery](https://github.com/kumuluz/kumuluzee-discovery), service discovery extension for microservices written in Java programming language. It provides support for service registration, service discovery and client side load balancing.
+KumuluzEE Go Discovery is a service discovery library for the KumuluzEE microservice framework. It is a Go package based on a [KumuluzEE Discovery](https://github.com/kumuluz/kumuluzee-discovery), service discovery extension for microservices written in Java programming language. It provides support for service registration, service discovery and client side load balancing.
 
 KumuluzEE Go Discovery provides full support for microservices packed as Docker containers. It also provides full support for executing microservices in clusters and cloud-native platforms with full support for Kubernetes.
 
@@ -16,7 +14,7 @@ $ go get github.com/mc0239/kumuluzee-go-discovery/discovery
 
 ## Setup
 
-Before you can start using this library you should configure properties in order to successfully connect to desired discovery framework. If you wish to connect to Consul check section [Configuring Consul](https://github.com/kumuluz/kumuluzee-discovery#configuring-consul).
+Before you can start using this library you should configure properties in order to successfully connect to desired discovery framework. If you wish to connect to Consul check section [Configuring Consul](https://github.com/kumuluz/kumuluzee-discovery#configuring-consul) or [Configuring etcd](https://github.com/kumuluz/kumuluzee-discovery#configuring-etcd) to connect to etcd.
 
 Library also supports retry delays on watch connection errors. For more information check [Retry delays](https://github.com/kumuluz/kumuluzee-discovery#retry-delays).
 
@@ -102,7 +100,7 @@ if err != nil {
 
 }
 ```
-<s>
+
 **Access types**
 
 Service discovery supports two access types:
@@ -111,7 +109,6 @@ Service discovery supports two access types:
 *   `DIRECT`  always returns base URL or container URL.
 
 When Consul implementation is used, gateway URL is read from Consul key-value store. It is stored in key`/environments/'environment'/services/'serviceName'/'serviceVersion'/gatewayUrl`  and is automatically updated on changes.
-</s>
 
 **NPM-like versioning**
 
@@ -122,20 +119,22 @@ Service discovery supports semantic versioning. If service is registered with ve
 
 For more information see  [Semantic versioning spec](https://semver.org/).
 
-### Executing service discovery only when needed
-
-<s>
-
-When discovering service with `discoverService` function the service is discovered every time the function is called. While in a run time service is listening for changes so the value of discovered service is changed in a background. Every time a change of discovered service happens info about the change is logged. So in order to access the new discovered service value you need to call discovering function again.
-
-</s>
-
 ### Cluster, cloud-native platforms and Kubernetes
 KumuluzEE Go Discovery is also fully compatible with clusters and cloud-native platforms. For more information check [Cluster, cloud-native platforms and Kubernetes](https://github.com/kumuluz/kumuluzee-discovery#cluster-cloud-native-platforms-and-kubernetes).
 
 ## Changelog
 
 Recent changes can be viewed on Github on the  [Releases Page](https://github.com/kumuluz/kumuluzee/releases)
+
+## Contribute
+
+See the  [contributing docs](https://github.com/mc0239/kumuluzee-go-discovery/blob/master/CONTRIBUTING.md)
+
+When submitting an issue, please follow the  [guidelines](https://github.com/mc0239/kumuluzee-go-discovery/blob/master/CONTRIBUTING.md#bugs).
+
+When submitting a bugfix, write a test that exposes the bug and fails before applying your fix. Submit the test alongside the fix.
+
+When submitting a new feature, add tests that cover the feature.
 
 ## License
 
