@@ -22,11 +22,11 @@ type consulDiscoverySource struct {
 	maxRetryDelay   int64
 	protocol        string
 
-	configOptions config.Options
+	configOptions   config.Options         // passed when calling new...()
+	options         *registerConfiguration // loaded as config bundle
+	serviceInstance *consulServiceInstance
 
 	logger *logm.Logm
-
-	serviceInstance *consulServiceInstance
 }
 
 // holds service instance configuration and state
@@ -38,8 +38,6 @@ type consulServiceInstance struct {
 	versionTag string
 
 	singleton bool
-
-	options *registerConfiguration
 }
 
 func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discoverySource {
@@ -77,26 +75,24 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 
 func (d consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
-	regService := consulServiceInstance{
-		options:   &regconf,
+	d.options = &regconf
+
+	d.serviceInstance = &consulServiceInstance{
 		singleton: options.Singleton,
 	}
-
-	d.serviceInstance = &regService
 
 	uuid4, err := uuid.NewV4()
 	if err != nil {
 		d.logger.Error(err.Error())
 	}
 
-	regService.id = regService.options.Name + "-" + uuid4.String()
-	regService.name = regService.options.Env.Name + "-" + regService.options.Name
-	regService.versionTag = "version=" + regService.options.Version
+	d.serviceInstance.id = d.options.Name + "-" + uuid4.String()
+	d.serviceInstance.name = d.options.Env.Name + "-" + d.options.Name
+	d.serviceInstance.versionTag = "version=" + d.options.Version
 
-	d.register(d.startRetryDelay)
-	go d.ttlUpdate(d.startRetryDelay)
+	go d.run(d.startRetryDelay)
 
-	return regService.id, nil
+	return d.serviceInstance.id, nil
 }
 
 func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
@@ -121,93 +117,108 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string,
 
 // functions that aren't discoverySource methods
 
-func (d consulDiscoverySource) isServiceRegistered() bool {
-	reg := d.serviceInstance
-	serviceEntries, _, err := d.client.Health().Service(reg.id, reg.versionTag, true, nil)
+// if service is not registered, performs registration. Otherwise perform ttl update
+func (d consulDiscoverySource) run(retryDelay int64) {
 
-	if err != nil {
-		d.logger.Error(err.Error())
-		return false
-	}
-
-	for _, service := range serviceEntries {
-		for _, tag := range service.Service.Tags {
-			if tag == reg.versionTag {
-				return true
-			}
+	var ok bool
+	if !d.serviceInstance.isRegistered {
+		ok = d.register(retryDelay)
+		if ok {
+			d.serviceInstance.isRegistered = true
 		}
-	}
-
-	return false
-}
-
-func (d consulDiscoverySource) register(retryDelay int64) {
-	reg := d.serviceInstance
-	if isRegistered := d.isServiceRegistered(); isRegistered && reg.singleton {
-		d.logger.Error("Service is already registered, not registering with options.singleton set to true")
 	} else {
-		d.logger.Info("Registering service: id=%s address=%s port=%d", reg.id, reg.options.Server.HTTP.Address, reg.options.Server.HTTP.Port)
-
-		agentRegistration := api.AgentServiceRegistration{
-			Port: reg.options.Server.HTTP.Port,
-			ID:   reg.id,
-			Name: reg.name,
-			Tags: []string{d.protocol, reg.versionTag},
-			Check: &api.AgentServiceCheck{
-				CheckID: "check-" + reg.id,
-				TTL:     strconv.FormatInt(reg.options.Discovery.TTL, 10) + "s",
-				DeregisterCriticalServiceAfter: strconv.FormatInt(10, 10) + "s",
-			},
+		ok = d.ttlUpdate(retryDelay)
+		if !ok {
+			d.serviceInstance.isRegistered = false
 		}
-
-		if reg.options.Server.HTTP.Address != "" {
-			agentRegistration.Address = reg.options.Server.HTTP.Address
-		}
-
-		err := d.client.Agent().ServiceRegister(&agentRegistration)
-
-		if err != nil {
-			d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
-			// sleep for current delay
-			time.Sleep(time.Duration(retryDelay) * time.Millisecond)
-
-			// exponentially extend retry delay, but keep it at most maxRetryDelay
-			newRetryDelay := retryDelay * 2
-			if newRetryDelay > d.maxRetryDelay {
-				newRetryDelay = d.maxRetryDelay
-			}
-			d.register(newRetryDelay)
-			return
-		}
-
-		d.logger.Info("Service registered, id=%s", reg.id)
-		reg.isRegistered = true
 	}
-}
 
-func (d consulDiscoverySource) ttlUpdate(retryDelay int64) {
-	reg := d.serviceInstance
-	d.logger.Verbose("Updating TTL for service %s", reg.id)
-
-	err := d.client.Agent().UpdateTTL("check-"+reg.id, "serviceid="+reg.id+" time="+time.Now().Format("2006-01-02 15:04:05"), "passing")
-	if err != nil {
-		d.logger.Error("Updating TTL failed for service %s, error: %s, retry delay: %d ms", reg.id, err.Error(), retryDelay)
+	if !ok {
+		// Something went wrong with either registration or TTL update :(
 
 		// sleep for current delay
 		time.Sleep(time.Duration(retryDelay) * time.Millisecond)
-
 		// exponentially extend retry delay, but keep it at most maxRetryDelay
 		newRetryDelay := retryDelay * 2
 		if newRetryDelay > d.maxRetryDelay {
 			newRetryDelay = d.maxRetryDelay
 		}
-		d.ttlUpdate(newRetryDelay)
-		return
+		d.run(newRetryDelay)
+	} else {
+		// Everything is alright, either registration or TTL update was successful :)
+
+		time.Sleep(time.Duration(d.options.Discovery.PingInterval) * time.Second)
+		d.run(d.startRetryDelay)
 	}
 
-	time.Sleep(time.Duration(reg.options.Discovery.PingInterval) * time.Second)
-	d.ttlUpdate(d.startRetryDelay)
-	return
+}
+
+func (d consulDiscoverySource) register(retryDelay int64) bool {
+	inst := d.serviceInstance
+
+	if d.isServiceRegistered() && inst.singleton {
+		d.logger.Error("Service of this kind is already registered, not registering with options.singleton set to true")
+		return false
+	}
+
+	d.logger.Info("Registering service: id=%s address=%s port=%d", inst.id, d.options.Server.HTTP.Address, d.options.Server.HTTP.Port)
+
+	agentRegistration := api.AgentServiceRegistration{
+		Port: d.options.Server.HTTP.Port,
+		ID:   inst.id,
+		Name: inst.name,
+		Tags: []string{d.protocol, inst.versionTag},
+		Check: &api.AgentServiceCheck{
+			CheckID: "check-" + inst.id,
+			TTL:     strconv.FormatInt(d.options.Discovery.TTL, 10) + "s",
+			DeregisterCriticalServiceAfter: strconv.FormatInt(10, 10) + "s",
+		},
+	}
+
+	if d.options.Server.HTTP.Address != "" {
+		agentRegistration.Address = d.options.Server.HTTP.Address
+	}
+
+	err := d.client.Agent().ServiceRegister(&agentRegistration)
+
+	if err != nil {
+		d.logger.Error(fmt.Sprintf("Service registration failed: %s", err.Error()))
+		return false
+	}
+
+	d.logger.Info("Service registered, id=%s", inst.id)
+	return true
+}
+
+func (d consulDiscoverySource) ttlUpdate(retryDelay int64) bool {
+	inst := d.serviceInstance
+	//d.logger.Verbose("Updating TTL for service %s", inst.id)
+
+	err := d.client.Agent().UpdateTTL(
+		"check-"+inst.id,
+		"serviceid="+inst.id+" time="+time.Now().Format("2006-01-02 15:04:05"),
+		"passing")
+
+	if err != nil {
+		d.logger.Error("TTL update failed, error: %s, retry delay: %d ms", inst.id, err.Error(), retryDelay)
+		return false
+	}
+
+	d.logger.Verbose("TTL update for service %s", inst.id)
+	return true
+}
+
+// returns true if there are any services of this kind (env+name) registered
+func (d consulDiscoverySource) isServiceRegistered() bool {
+	reg := d.serviceInstance
+	serviceEntries, _, err := d.client.Health().Service(reg.id, "", true, nil)
+
+	if err != nil {
+		d.logger.Warning("isServiceRegistered() failed: %s", err.Error())
+		return false
+	}
+
+	return len(serviceEntries) > 0
 }
 
 func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (string, error) {

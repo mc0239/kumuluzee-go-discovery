@@ -267,7 +267,7 @@ func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
 	return true
 }
 
-// returns true if there are any services of this kind registered
+// returns true if there are any services of this kind (env+name) registered
 func (d etcdDiscoverySource) isServiceRegistered() bool {
 	etcdKeyDir := fmt.Sprintf("/environments/%s/services/%s/%s/instances/",
 		d.options.Env.Name, d.options.Name, d.options.Version)
