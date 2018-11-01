@@ -57,10 +57,16 @@ type DiscoverOptions struct {
 	// Default value is "*", which resolves to highest deployed version.
 	Version string
 	// AccessType defines, which URL gets injected.
-	// Supported values are "gateway" and "direct".
-	// Default value is "gateway".
+	// Supported values are constants discovery.AccessTypeGateway and discovery.AccessTypeDirect.
+	// Default value is discovery.AccessTypeGateway.
 	AccessType string
 }
+
+// Possible access types for DiscoverOptions.AccessType
+const (
+	AccessTypeDirect  = "direct"
+	AccessTypeGateway = "gateway"
+)
 
 // Util is used for registering and discovering services from a service discovery source.
 // Util should be initialized with discovery.New() function
@@ -69,14 +75,9 @@ type Util struct {
 	Logger          logm.Logm
 }
 
-type Service struct {
-	Address string
-	Port    string
-}
-
 type discoverySource interface {
 	RegisterService(options RegisterOptions) (serviceID string, err error)
-	DiscoverService(options DiscoverOptions) (Service, error)
+	DiscoverService(options DiscoverOptions) (string, error)
 }
 
 // New instantiates Util struct with initialized service discovery
@@ -114,6 +115,6 @@ func (d Util) RegisterService(options RegisterOptions) (string, error) {
 }
 
 // DiscoverService discovery services using service discovery client with given RegisterOptions
-func (d Util) DiscoverService(options DiscoverOptions) (Service, error) {
+func (d Util) DiscoverService(options DiscoverOptions) (string, error) {
 	return d.discoverySource.DiscoverService(options)
 }

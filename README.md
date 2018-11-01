@@ -89,7 +89,7 @@ service, err := disc.DiscoverService(discovery.DiscoverOptions{
     Value: "",
     Environment: "dev",
     Version: "*",
-    AccessType: "GATEWAY",
+    AccessType: discovery.AccessTypeGateway,
 })
 
 if err != nil {

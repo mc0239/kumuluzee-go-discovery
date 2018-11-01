@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -92,55 +92,44 @@ func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID
 	return d.serviceInstance.id, nil
 }
 
-func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
+func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
+	fillDefaultDiscoverOptions(&options)
 
 	kvPath := fmt.Sprintf("environments/%s/services/%s/%s/instances/",
 		options.Environment, options.Value, options.Version)
 
-	kvDir, err := d.kvClient.Get(context.Background(), kvPath, nil)
+	// TODO MAJOR: options.Version check and parse!
+
+	resp, err := d.kvClient.Get(context.Background(), kvPath, &client.GetOptions{
+		Recursive: true,
+	})
+
 	if err != nil {
-		return Service{}, err
+		return "", err
 	}
 
-	randomIndex := rand.Intn(kvDir.Node.Nodes.Len())
-	randomNode := kvDir.Node.Nodes[randomIndex]
+	// pick a random service instance from registered instances
+	instances := resp.Node.Nodes
+	randomInstance := instances[rand.Intn(instances.Len())]
 
-	instance, err := d.kvClient.Get(context.Background(), randomNode.Key, nil)
-	if err != nil {
-		return Service{}, err
-	}
-
-	for _, node := range instance.Node.Nodes {
-		// TODO: gateway, direct,  ???
-		var keySuffix string
-		switch options.AccessType {
-		case "gateway":
-			keySuffix = "gatewayUrl"
-			break
-		case "direct":
-			keySuffix = "url"
-			break
-		default:
-			keySuffix = "gatewayUrl"
-			d.logger.Warning("Invalid AccessType specified, using gateway")
-			break
-		}
-
+	// TODO: containerUrl?
+	var directURL, gatewayURL string
+	for _, node := range randomInstance.Nodes {
 		// fmt.Printf("key=%v value=%v", node.Key, node.Value)
-		if strings.HasSuffix(node.Key, keySuffix) {
-			serviceURL, err := url.Parse(node.Value)
-			if err != nil {
-				return Service{}, err
-			}
-			// print("addr=%s port=%s", serviceURL.Hostname(), serviceURL.Port())
-			return Service{
-				Address: serviceURL.Hostname(),
-				Port:    serviceURL.Port(),
-			}, nil
+		if path.Base(node.Key) == "url" {
+			directURL = node.Value
+		} else if path.Base(node.Key) == "gatewayUrl" {
+			gatewayURL = node.Value
 		}
 	}
 
-	return Service{}, fmt.Errorf("No service found")
+	if options.AccessType == AccessTypeGateway && gatewayURL != "" {
+		return gatewayURL, nil
+	} else if directURL != "" {
+		return directURL, nil
+	} else {
+		return "", fmt.Errorf("No service found")
+	}
 }
 
 // functions that aren't discoverySource methods
@@ -225,7 +214,7 @@ func (d etcdDiscoverySource) register(retryDelay int64) bool {
 
 func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
 	inst := d.serviceInstance
-	d.logger.Verbose("Updating TTL for service %s", inst.id)
+	// d.logger.Verbose("Updating TTL for service %s", inst.id)
 
 	_, err := d.kvClient.Set(context.Background(), inst.etcdKeyDir, "", &client.SetOptions{
 		TTL:       time.Duration(d.options.Discovery.TTL) * time.Second,
@@ -235,7 +224,7 @@ func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
 	})
 
 	if err != nil {
-		d.logger.Error("Updating TTL failed for service %s, error: %s, retry delay: %d ms", inst.id, err.Error(), retryDelay)
+		d.logger.Error("TTL update failed, error: %s, retry delay: %d ms", inst.id, err.Error(), retryDelay)
 		return false
 	}
 
@@ -262,10 +251,10 @@ func (d etcdDiscoverySource) isServiceRegistered() bool {
 		var isActive = true
 
 		for _, node := range instance.Nodes {
-			if strings.HasSuffix(node.Key, "url") {
+			if path.Base(node.Key) == "url" {
 				URL = node.Value
 			}
-			if strings.HasSuffix(node.Key, "status") {
+			if path.Base(node.Key) == "status" {
 				if node.Value == "disabled" {
 					isActive = false
 				}

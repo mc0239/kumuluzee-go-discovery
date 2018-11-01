@@ -99,21 +99,21 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 	return regService.id, nil
 }
 
-func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (Service, error) {
+func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
 
 	// TODO: ACCESSTYPE?
 	queryServiceName := options.Environment + "-" + options.Value
 	serviceEntries, _, err := d.client.Health().Service(queryServiceName, "", true, nil)
 	if err != nil {
 		d.logger.Error("Service discovery failed: %s", err.Error())
-		return Service{}, fmt.Errorf("Service discovery failed: %s", err.Error())
+		return "", fmt.Errorf("Service discovery failed: %s", err.Error())
 	}
 
 	d.logger.Verbose("Services %s-%s available: %d", options.Environment, options.Value, len(serviceEntries))
 
 	versionRange, err := parseVersion(options.Version)
 	if err != nil {
-		return Service{}, fmt.Errorf("wantVersion parse error: %s", err.Error())
+		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
 	}
 
 	return d.extractService(serviceEntries, versionRange)
@@ -210,7 +210,7 @@ func (d consulDiscoverySource) ttlUpdate(retryDelay int64) {
 	return
 }
 
-func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (Service, error) {
+func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry, wantVersion semver.Range) (string, error) {
 	var foundServiceIndexes []int
 	for index, serviceEntry := range serviceEntries {
 		for _, tag := range serviceEntry.Service.Tags {
@@ -247,13 +247,11 @@ func (d consulDiscoverySource) extractService(serviceEntries []*api.ServiceEntry
 
 		d.logger.Verbose("Found service, address=%s port=%d", addr, port)
 
-		return Service{
-			Address: addr,
-			Port:    strconv.Itoa(port),
-		}, nil
+		// TODO check if ok
+		return fmt.Sprintf("%s:%d", addr, port), nil
 	}
 
-	return Service{}, fmt.Errorf("Service discovery failed: No services for given query")
+	return "", fmt.Errorf("Service discovery failed: No services for given query")
 }
 
 // functions that aren't discoverySource methods or consulDiscoverySource methods

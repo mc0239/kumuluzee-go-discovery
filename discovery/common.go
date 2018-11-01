@@ -43,6 +43,18 @@ func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 	return
 }
 
+func fillDefaultDiscoverOptions(options *DiscoverOptions) {
+	if options.Environment == "" {
+		options.Environment = "dev"
+	}
+	if options.Version == "" {
+		options.Version = "*"
+	}
+	if options.AccessType == "" {
+		options.AccessType = AccessTypeGateway
+	}
+}
+
 func loadServiceRegisterConfiguration(confOptions config.Options, regOptions RegisterOptions) (regconf registerConfiguration) {
 	// Load default values
 	regconf = registerConfiguration{}
