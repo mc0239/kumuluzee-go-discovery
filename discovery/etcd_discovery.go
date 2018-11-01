@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blang/semver"
+
 	"github.com/mc0239/kumuluzee-go-config/config"
 	"github.com/mc0239/logm"
 	uuid "github.com/satori/go.uuid"
@@ -95,10 +97,7 @@ func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID
 func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
 	fillDefaultDiscoverOptions(&options)
 
-	kvPath := fmt.Sprintf("environments/%s/services/%s/%s/instances/",
-		options.Environment, options.Value, options.Version)
-
-	// TODO MAJOR: options.Version check and parse!
+	kvPath := fmt.Sprintf("environments/%s/services/%s/", options.Environment, options.Value)
 
 	resp, err := d.kvClient.Get(context.Background(), kvPath, &client.GetOptions{
 		Recursive: true,
@@ -108,27 +107,63 @@ func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, e
 		return "", err
 	}
 
-	// pick a random service instance from registered instances
-	instances := resp.Node.Nodes
-	randomInstance := instances[rand.Intn(instances.Len())]
+	// ----- extract all services of all versions of given environment and name
+	var discoveredInstances []discoveredService
+	// iterate all versions
+	for _, nodeVersion := range resp.Node.Nodes {
+		currentVersion := path.Base(nodeVersion.Key)
+		// we need .../instances/ key
+		var instances *client.Node
+		for _, n := range nodeVersion.Nodes {
+			if path.Base(n.Key) == "instances" {
+				instances = n
+				break
+			}
+		}
 
-	// TODO: containerUrl?
-	var directURL, gatewayURL string
-	for _, node := range randomInstance.Nodes {
-		// fmt.Printf("key=%v value=%v", node.Key, node.Value)
-		if path.Base(node.Key) == "url" {
-			directURL = node.Value
-		} else if path.Base(node.Key) == "gatewayUrl" {
-			gatewayURL = node.Value
+		// iterate all instances
+		for _, instance := range instances.Nodes {
+			discoveredInstance := discoveredService{}
+			discoveredInstance.id = path.Base(instance.Key)
+
+			version, err := semver.ParseTolerant(currentVersion)
+			if err != nil {
+				break
+			}
+			discoveredInstance.version = version
+
+			for _, node := range instance.Nodes {
+				// fmt.Printf("key=%v value=%v", node.Key, node.Value)
+				if path.Base(node.Key) == "url" {
+					discoveredInstance.directURL = node.Value
+				} else if path.Base(node.Key) == "gatewayUrl" {
+					discoveredInstance.gatewayURL = node.Value
+				}
+			}
+
+			discoveredInstances = append(discoveredInstances, discoveredInstance)
 		}
 	}
+	// -----
 
-	if options.AccessType == AccessTypeGateway && gatewayURL != "" {
-		return gatewayURL, nil
-	} else if directURL != "" {
-		return directURL, nil
+	wantVersion, err := parseVersion(options.Version)
+	if err != nil {
+		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
+	}
+
+	// pick a random service instance from registered instances that match version
+	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
+	if len(instances) == 0 {
+		return "", fmt.Errorf("No service found (no matching version)")
+	}
+
+	randomInstance := instances[rand.Intn(len(instances))]
+	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
+		return randomInstance.gatewayURL, nil
+	} else if randomInstance.directURL != "" {
+		return randomInstance.directURL, nil
 	} else {
-		return "", fmt.Errorf("No service found")
+		return "", fmt.Errorf("No service found (no service with URL)")
 	}
 }
 

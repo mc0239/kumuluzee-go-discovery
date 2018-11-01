@@ -27,6 +27,15 @@ type registerConfiguration struct {
 	}
 }
 
+type discoveredService struct {
+	version    semver.Version
+	id         string
+	directURL  string
+	gatewayURL string
+}
+
+//
+
 func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 	if sdl, ok := conf.GetInt("kumuluzee.config.start-retry-delay-ms"); ok {
 		startRD = int64(sdl)
@@ -109,4 +118,15 @@ func parseVersion(version string) (semver.Range, error) {
 	} else {
 		return semver.ParseRange(version)
 	}
+}
+
+func extractServicesWithVersion(services []discoveredService, wantVersion semver.Range) []discoveredService {
+	var matchingServices []discoveredService
+	for _, s := range services {
+		// if service version is in range of wantVersion
+		if wantVersion(s.version) {
+			matchingServices = append(matchingServices, s)
+		}
+	}
+	return matchingServices
 }
