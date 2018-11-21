@@ -188,10 +188,11 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string,
 // if service is not registered, performs registration. Otherwise perform ttl update
 func (d consulDiscoverySource) run(retryDelay int64) {
 
-	var ok bool
+	var ok, firstTTL bool
 	if !d.serviceInstance.isRegistered {
 		ok = d.register(retryDelay)
 		if ok {
+			firstTTL = true
 			d.serviceInstance.isRegistered = true
 		}
 	} else {
@@ -215,7 +216,13 @@ func (d consulDiscoverySource) run(retryDelay int64) {
 	} else {
 		// Everything is alright, either registration or TTL update was successful :)
 
-		time.Sleep(time.Duration(d.options.Discovery.PingInterval) * time.Second)
+		// Note: Perform a TTL update immediately after registration
+		// registering with Consul does not assume successful TTL update and has to be done manually
+		// immediately after registration)
+		if !firstTTL {
+			time.Sleep(time.Duration(d.options.Discovery.PingInterval) * time.Second)
+			firstTTL = false
+		}
 		d.run(d.startRetryDelay)
 	}
 
