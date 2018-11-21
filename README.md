@@ -12,6 +12,8 @@ You can `go get` this package:
 $ go get github.com/mc0239/kumuluzee-go-discovery/discovery
 ```
 
+Note that `kumuluzee-go-discovery` depends on [kumuluzee-go-config/config](kumuluzee-go-config/config) package, therefore when we `go get` discovery package, config package is downloaded as well.
+
 ## Setup
 
 Before you can start using this library you should configure properties in order to successfully connect to desired discovery framework. If you wish to connect to Consul check section [Configuring Consul](https://github.com/kumuluz/kumuluzee-discovery#configuring-consul) or [Configuring etcd](https://github.com/kumuluz/kumuluzee-discovery#configuring-etcd) to connect to etcd.
