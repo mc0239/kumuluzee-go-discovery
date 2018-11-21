@@ -83,7 +83,7 @@ type discoverySource interface {
 // New instantiates Util struct with initialized service discovery
 func New(options Options) Util {
 
-	lgr := logm.New("Kumuluz-discovery")
+	lgr := logm.New("KumuluzEE-discovery")
 
 	var src discoverySource
 
