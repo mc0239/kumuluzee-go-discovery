@@ -54,11 +54,12 @@ func getRetryDelays(conf config.Util) (startRD, maxRD int64) {
 }
 
 func fillDefaultDiscoverOptions(options *DiscoverOptions) {
+	// Load default values
 	if options.Environment == "" {
 		options.Environment = "dev"
 	}
 	if options.Version == "" {
-		options.Version = "*"
+		options.Version = ">=0.0.0" // discover ANY version
 	}
 	if options.AccessType == "" {
 		options.AccessType = AccessTypeGateway
