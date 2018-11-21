@@ -161,12 +161,14 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string,
 
 	wantVersion, err := parseVersion(options.Version)
 	if err != nil {
+		d.logger.Warning("wantVersion parse error: %s", err.Error())
 		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
 	}
 
 	// pick a random service instance from registered instances that match version
 	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
 	if len(instances) == 0 {
+		d.logger.Verbose("No service found (no matching version)")
 		return "", fmt.Errorf("No service found (no matching version)")
 	}
 
@@ -176,6 +178,7 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string,
 	} else if randomInstance.directURL != "" {
 		return randomInstance.directURL, nil
 	} else {
+		d.logger.Verbose("No service found (no service with URL)")
 		return "", fmt.Errorf("No service found (no service with URL)")
 	}
 }
