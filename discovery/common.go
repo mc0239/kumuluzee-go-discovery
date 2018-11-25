@@ -124,11 +124,26 @@ func parseVersion(version string) (semver.Range, error) {
 
 func extractServicesWithVersion(services []discoveredService, wantVersion semver.Range) []discoveredService {
 	var matchingServices []discoveredService
+	// first, get all services that are within range, and store the latest version found
+	// then, return services that match only the latest version
+
+	var latestVersion semver.Version
 	for _, s := range services {
 		// if service version is in range of wantVersion
 		if wantVersion(s.version) {
+			// store latest version
+			if s.version.GTE(latestVersion) {
+				latestVersion = s.version
+			}
+		}
+	}
+
+	for _, s := range services {
+		// if service is of latestVersion
+		if s.version.EQ(latestVersion) {
 			matchingServices = append(matchingServices, s)
 		}
 	}
+
 	return matchingServices
 }
