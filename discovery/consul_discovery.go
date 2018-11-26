@@ -56,6 +56,8 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 	var consulAddress string
 	if addr, ok := conf.GetString("kumuluzee.discovery.consul.hosts"); ok {
 		consulAddress = addr
+	} else {
+		consulAddress = "http://localhost:8500"
 	}
 	if client, err := createConsulClient(consulAddress); err == nil {
 		logger.Info("Consul client address set to %v", consulAddress)
@@ -96,7 +98,7 @@ func (d *consulDiscoverySource) RegisterService(options RegisterOptions) (servic
 }
 
 func (d *consulDiscoverySource) DeregisterService() error {
-	d.logger.Info("Deregistering service with id %v", d.serviceInstance.id)
+	d.logger.Info("Service deregistered, id=%s", d.serviceInstance.id)
 	return d.client.Agent().ServiceDeregister(d.serviceInstance.id)
 }
 

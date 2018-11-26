@@ -58,6 +58,8 @@ func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discovery
 	var etcdAddresses string
 	if addr, ok := conf.GetString("kumuluzee.discovery.etcd.hosts"); ok {
 		etcdAddresses = addr
+	} else {
+		etcdAddresses = "http://localhost:2379"
 	}
 	if client, err := createEtcdClient(etcdAddresses); err == nil {
 		logger.Info("etcd client addresses set to: %v", etcdAddresses)
@@ -95,8 +97,14 @@ func (d *etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceI
 }
 
 func (d *etcdDiscoverySource) DeregisterService() error {
-	// TODO
-	return nil
+	d.logger.Info("Service deregistered, id=%s", d.serviceInstance.id)
+	_, err := d.kvClient.Delete(context.Background(),
+		d.serviceInstance.etcdKeyDir,
+		&client.DeleteOptions{
+			Recursive: true,
+			Dir:       true,
+		})
+	return err
 }
 
 func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
@@ -143,7 +151,7 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 				// fmt.Printf("key=%v value=%v", node.Key, node.Value)
 				if path.Base(node.Key) == "url" {
 					discoveredInstance.directURL = node.Value
-				} else if path.Base(node.Key) == "gatewayUrl" {
+				} else if path.Base(node.Key) == "gatewayUrl" { // TODO gateway url is not here!
 					discoveredInstance.gatewayURL = node.Value
 				}
 			}
