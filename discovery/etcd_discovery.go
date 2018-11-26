@@ -68,10 +68,10 @@ func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discovery
 
 	d.kvClient = client.NewKeysAPI(*d.client)
 
-	return d
+	return &d
 }
 
-func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
+func (d *etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
 	d.options = &regconf
 
@@ -94,7 +94,12 @@ func (d etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceID
 	return d.serviceInstance.id, nil
 }
 
-func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
+func (d *etcdDiscoverySource) DeregisterService() error {
+	// TODO
+	return nil
+}
+
+func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
 	fillDefaultDiscoverOptions(&options)
 
 	kvPath := fmt.Sprintf("environments/%s/services/%s/", options.Environment, options.Value)
@@ -175,7 +180,7 @@ func (d etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, e
 // functions that aren't discoverySource methods
 
 // if service is not registered, performs registration. Otherwise perform ttl update
-func (d etcdDiscoverySource) run(retryDelay int64) {
+func (d *etcdDiscoverySource) run(retryDelay int64) {
 
 	var ok bool
 	if !d.serviceInstance.isRegistered {
@@ -210,7 +215,7 @@ func (d etcdDiscoverySource) run(retryDelay int64) {
 
 }
 
-func (d etcdDiscoverySource) register(retryDelay int64) bool {
+func (d *etcdDiscoverySource) register(retryDelay int64) bool {
 	inst := d.serviceInstance
 
 	if d.isServiceRegistered() && inst.singleton {
@@ -252,7 +257,7 @@ func (d etcdDiscoverySource) register(retryDelay int64) bool {
 	return true
 }
 
-func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
+func (d *etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
 	inst := d.serviceInstance
 	// d.logger.Verbose("Updating TTL for service %s", inst.id)
 
@@ -273,7 +278,7 @@ func (d etcdDiscoverySource) ttlUpdate(retryDelay int64) bool {
 }
 
 // returns true if there are any services of this kind (env+name) registered
-func (d etcdDiscoverySource) isServiceRegistered() bool {
+func (d *etcdDiscoverySource) isServiceRegistered() bool {
 	etcdKeyDir := fmt.Sprintf("/environments/%s/services/%s/%s/instances/",
 		d.options.Env.Name, d.options.Name, d.options.Version)
 

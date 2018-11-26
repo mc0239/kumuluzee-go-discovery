@@ -70,10 +70,10 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 		d.protocol = "http"
 	}
 
-	return d
+	return &d
 }
 
-func (d consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
+func (d *consulDiscoverySource) RegisterService(options RegisterOptions) (serviceID string, err error) {
 	regconf := loadServiceRegisterConfiguration(d.configOptions, options)
 	d.options = &regconf
 
@@ -95,7 +95,12 @@ func (d consulDiscoverySource) RegisterService(options RegisterOptions) (service
 	return d.serviceInstance.id, nil
 }
 
-func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
+func (d *consulDiscoverySource) DeregisterService() error {
+	d.logger.Info("Deregistering service with id %v", d.serviceInstance.id)
+	return d.client.Agent().ServiceDeregister(d.serviceInstance.id)
+}
+
+func (d *consulDiscoverySource) DiscoverService(options DiscoverOptions) (string, error) {
 	fillDefaultDiscoverOptions(&options)
 
 	queryServiceName := options.Environment + "-" + options.Value
@@ -186,7 +191,7 @@ func (d consulDiscoverySource) DiscoverService(options DiscoverOptions) (string,
 // functions that aren't discoverySource methods
 
 // if service is not registered, performs registration. Otherwise perform ttl update
-func (d consulDiscoverySource) run(retryDelay int64) {
+func (d *consulDiscoverySource) run(retryDelay int64) {
 
 	var ok, firstTTL bool
 	if !d.serviceInstance.isRegistered {
@@ -228,7 +233,7 @@ func (d consulDiscoverySource) run(retryDelay int64) {
 
 }
 
-func (d consulDiscoverySource) register(retryDelay int64) bool {
+func (d *consulDiscoverySource) register(retryDelay int64) bool {
 	inst := d.serviceInstance
 
 	if d.isServiceRegistered() && inst.singleton {
@@ -265,7 +270,7 @@ func (d consulDiscoverySource) register(retryDelay int64) bool {
 	return true
 }
 
-func (d consulDiscoverySource) ttlUpdate(retryDelay int64) bool {
+func (d *consulDiscoverySource) ttlUpdate(retryDelay int64) bool {
 	inst := d.serviceInstance
 	//d.logger.Verbose("Updating TTL for service %s", inst.id)
 
@@ -284,7 +289,7 @@ func (d consulDiscoverySource) ttlUpdate(retryDelay int64) bool {
 }
 
 // returns true if there are any services of this kind (env+name) registered
-func (d consulDiscoverySource) isServiceRegistered() bool {
+func (d *consulDiscoverySource) isServiceRegistered() bool {
 	reg := d.serviceInstance
 	serviceEntries, _, err := d.client.Health().Service(reg.id, "", true, nil)
 

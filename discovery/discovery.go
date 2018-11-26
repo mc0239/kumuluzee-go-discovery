@@ -77,6 +77,7 @@ type Util struct {
 
 type discoverySource interface {
 	RegisterService(options RegisterOptions) (serviceID string, err error)
+	DeregisterService() error
 	DiscoverService(options DiscoverOptions) (string, error)
 }
 
@@ -112,6 +113,11 @@ func New(options Options) Util {
 // RegisterService registers service using service discovery client with given RegisterOptions
 func (d Util) RegisterService(options RegisterOptions) (string, error) {
 	return d.discoverySource.RegisterService(options)
+}
+
+// DeregisterService removes service from the registry (deregisters).
+func (d Util) DeregisterService() error {
+	return d.discoverySource.DeregisterService()
 }
 
 // DiscoverService discovery services using service discovery client with given RegisterOptions
