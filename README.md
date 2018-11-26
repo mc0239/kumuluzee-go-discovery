@@ -27,7 +27,7 @@ Library also supports retry delays on watch connection errors. For more informat
 *discovery.New(options)*
 
 Connect to a given discovery source. Function accepts `discovery.Options` struct with following fields:
-* **Extension** (string): name of service discovery source, possible values are "consul" 
+* **Extension** (string): name of service discovery source, possible values are "consul" and "etcd" 
 * **ConfigPath** (string): path to configuration source file, defaults to "config/config.yaml"
 
 Example usage:
@@ -44,7 +44,7 @@ disc = discovery.New(discovery.Options(
 })
 ```
 
-***.registerService(options)***
+***.RegisterService(options)***
 
 Registers service to specified discovery source with given options.
 
@@ -69,9 +69,10 @@ disc.RegisterService(discovery.RegisterOptions{
 })
 ```
 
- Consul implementation uses agent's IP address for the URL of registered services.
+To register a service with etcd, service URL has to be provided with the configuration key `kumuluzee.server.base-url` in the following format: `http://localhost:8080`.
+Consul implementation uses agent's IP address for the URL of registered services.
 
-***.discoverService(options)***
+***.DiscoverService(options)***
 
 Discovers service on specified discovery source.
 
@@ -110,7 +111,9 @@ Service discovery supports two access types:
 *   `GATEWAY`  returns gateway URL, if it is present. If not, behavior is the same as with  `DIRECT`,
 *   `DIRECT`  always returns base URL or container URL.
 
-When Consul implementation is used, gateway URL is read from Consul key-value store. It is stored in key`/environments/'environment'/services/'serviceName'/'serviceVersion'/gatewayUrl`  and is automatically updated on changes.
+If etcd implementation is used, gateway URL is read from etcd key-value store used for service discovery. It is stored in key `/environments/'environment'/services/'serviceName'/'serviceVersion'/gatewayUrl` and is automatically updated, if value changes.
+
+If Consul implementation is used, gateway URL is read from Consul key-value store. It is stored in key `/environments/'environment'/services/'serviceName'/'serviceVersion'/gatewayUrl`  and is automatically updated on changes.
 
 **NPM-like versioning**
 
