@@ -28,6 +28,8 @@ type etcdDiscoverySource struct {
 	options         *registerConfiguration // loaded as config bundle
 	serviceInstance *etcdServiceInstance
 
+	lastKnownService string // last known service from discovery
+
 	logger *logm.Logm
 }
 
@@ -97,7 +99,7 @@ func (d *etcdDiscoverySource) RegisterService(options RegisterOptions) (serviceI
 }
 
 func (d *etcdDiscoverySource) DeregisterService() error {
-	d.logger.Info("Service deregistered, id=%s", d.serviceInstance.id)
+	d.logger.Info("Service deregistration, id=%s", d.serviceInstance.id)
 	_, err := d.kvClient.Delete(context.Background(),
 		d.serviceInstance.etcdKeyDir,
 		&client.DeleteOptions{
@@ -117,7 +119,11 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 	})
 
 	if err != nil {
-		d.logger.Warning("Service discovery failed: %s", err.Error())
+		if d.lastKnownService != "" {
+			d.logger.Warning("Service discovery failed, using last known service. Error: %s", err.Error())
+			return d.lastKnownService, nil
+		}
+		d.logger.Error("Service discovery failed: %s", err.Error())
 		return "", err
 	}
 
@@ -163,24 +169,38 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 
 	wantVersion, err := parseVersion(options.Version)
 	if err != nil {
-		d.logger.Warning("wantVersion parse error: %s", err.Error())
+		if d.lastKnownService != "" {
+			d.logger.Warning("Service discovery failed, using last known service. Error: wantVersion parse error: %s", err.Error())
+			return d.lastKnownService, nil
+		}
+		d.logger.Error("Service discovery failed: wantVersion parse error: %s", err.Error())
 		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
 	}
 
 	// pick a random service instance from registered instances that match version
 	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
 	if len(instances) == 0 {
-		d.logger.Verbose("No service found (no matching version)")
+		if d.lastKnownService != "" {
+			d.logger.Warning("Service discovery failed, using last known service. Error: %s", "No service found (no matching version)")
+			return d.lastKnownService, nil
+		}
+		d.logger.Error("Service discovery failed: %s", "No service found (no matching version)")
 		return "", fmt.Errorf("No service found (no matching version)")
 	}
 
 	randomInstance := instances[rand.Intn(len(instances))]
 	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
+		d.lastKnownService = randomInstance.gatewayURL
 		return randomInstance.gatewayURL, nil
 	} else if randomInstance.directURL != "" {
+		d.lastKnownService = randomInstance.directURL
 		return randomInstance.directURL, nil
 	} else {
-		d.logger.Verbose("No service found (no service with URL)")
+		if d.lastKnownService != "" {
+			d.logger.Warning("Service discovery failed, using last known service. Error: %s", "No service found (no service with URL)")
+			return d.lastKnownService, nil
+		}
+		d.logger.Error("Service discovery failed: %s", "No service found (no service with URL)")
 		return "", fmt.Errorf("No service found (no service with URL)")
 	}
 }
