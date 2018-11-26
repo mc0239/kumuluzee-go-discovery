@@ -72,6 +72,28 @@ disc.RegisterService(discovery.RegisterOptions{
 To register a service with etcd, service URL has to be provided with the configuration key `kumuluzee.server.base-url` in the following format: `http://localhost:8080`.
 Consul implementation uses agent's IP address for the URL of registered services.
 
+***.DeregisterService()***
+
+Deregisters service from the service registry. Service deregistration needs to be performed manually, for example when service receives a terminate signal (SIGTERM):
+
+```go
+// catch interrupt or terminate signals and send them to sigs channel
+sigs := make(chan os.Signal, 1)
+signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+// function waits for received signal - and then performs service deregistration
+go func() {
+    <-sigs
+    if err := disc.DeregisterService(); err != nil {
+        panic(err)
+    }
+    // Make sure to call os.Exit() with status number at the end.
+    os.Exit(1)
+}()
+```
+
+See [discovery sample in kumuluzee-go-samples](https://github.com/mc0239/kumuluzee-go-samples/tree/master/kumuluzee-go-discovery) for example of service deregistration upon receiving interrupt or terminate signals.
+
 ***.DiscoverService(options)***
 
 Discovers service on specified discovery source.
