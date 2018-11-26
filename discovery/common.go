@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/blang/semver"
@@ -146,4 +148,38 @@ func extractServicesWithVersion(services []discoveredService, wantVersion semver
 	}
 
 	return matchingServices
+}
+
+// returns a randomly picked instace from discovered services.
+// Note that function can return both a valid, non-empty service string and an error, which means
+// that no proper service could be found and the lastKnownService string is being returned
+func pickRandomServiceInstance(discoveredInstances []discoveredService, options DiscoverOptions, lastKnownService string) (service string, err error) {
+	wantVersion, err := parseVersion(options.Version)
+	if err != nil {
+		if lastKnownService != "" {
+			return lastKnownService, fmt.Errorf("wantVersion parse error: %s", err.Error())
+		}
+		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
+	}
+
+	// pick a random service instance from registered instances that match version
+	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
+	if len(instances) == 0 {
+		if lastKnownService != "" {
+			return lastKnownService, fmt.Errorf("No service found (no matching version)")
+		}
+		return "", fmt.Errorf("No service found (no matching version)")
+	}
+
+	randomInstance := instances[rand.Intn(len(instances))]
+	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
+		return randomInstance.gatewayURL, nil
+	} else if randomInstance.directURL != "" {
+		return randomInstance.directURL, nil
+	} else {
+		if lastKnownService != "" {
+			return lastKnownService, fmt.Errorf("No service found (no service with URL)")
+		}
+		return "", fmt.Errorf("No service found (no service with URL)")
+	}
 }

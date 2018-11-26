@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -172,42 +171,20 @@ func (d *consulDiscoverySource) DiscoverService(options DiscoverOptions) (string
 	}
 	// -----
 
-	wantVersion, err := parseVersion(options.Version)
+	service, err := pickRandomServiceInstance(discoveredInstances, options, d.lastKnownService)
+
 	if err != nil {
-		if d.lastKnownService != "" {
-			d.logger.Warning("Service discovery failed, using last known service. Error: wantVersion parse error: %s", err.Error())
+		if service != "" {
+			d.logger.Warning("Service discovery failed, using last known service. Error: %s", err.Error())
 			return d.lastKnownService, nil
 		}
-		d.logger.Error("Service discovery failed: wantVersion parse error: %s", err.Error())
-		return "", fmt.Errorf("wantVersion parse error: %s", err.Error())
+
+		d.logger.Error("Service discovery failed: %s", err.Error())
+		return "", err
 	}
 
-	// pick a random service instance from registered instances that match version
-	instances := extractServicesWithVersion(discoveredInstances, wantVersion)
-	if len(instances) == 0 {
-		if d.lastKnownService != "" {
-			d.logger.Warning("Service discovery failed, using last known service. Error: %s", "No service found (no matching version)")
-			return d.lastKnownService, nil
-		}
-		d.logger.Error("Service discovery failed: %s", "No service found (no matching version)")
-		return "", fmt.Errorf("No service found (no matching version)")
-	}
-
-	randomInstance := instances[rand.Intn(len(instances))]
-	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
-		d.lastKnownService = randomInstance.gatewayURL
-		return randomInstance.gatewayURL, nil
-	} else if randomInstance.directURL != "" {
-		d.lastKnownService = randomInstance.directURL
-		return randomInstance.directURL, nil
-	} else {
-		if d.lastKnownService != "" {
-			d.logger.Warning("Service discovery failed, using last known service. Error: %s", "No service found (no service with URL)")
-			return d.lastKnownService, nil
-		}
-		d.logger.Error("Service discovery failed: %s", "No service found (no service with URL)")
-		return "", fmt.Errorf("No service found (no service with URL)")
-	}
+	d.lastKnownService = service
+	return service, nil
 }
 
 // functions that aren't discoverySource methods
