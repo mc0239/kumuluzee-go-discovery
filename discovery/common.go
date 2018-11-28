@@ -5,6 +5,8 @@ import (
 	"math/rand"
 	"strings"
 
+	"github.com/mc0239/logm"
+
 	"github.com/blang/semver"
 	"github.com/mc0239/kumuluzee-go-config/config"
 )
@@ -30,11 +32,15 @@ type registerConfiguration struct {
 }
 
 type discoveredService struct {
-	version    semver.Version
-	id         string
-	directURL  string
-	gatewayURL string
+	version   semver.Version
+	id        string
+	directURL string
 	// TODO: containerURL ?
+}
+
+type gatewayURLWatch struct {
+	gatewayID  string
+	gatewayURL string
 }
 
 //
@@ -78,7 +84,10 @@ func loadServiceRegisterConfiguration(confOptions config.Options, regOptions Reg
 	regconf.Discovery.PingInterval = 20
 
 	// Load from configuration file, overriding defaults
-	config.NewBundle("kumuluzee", &regconf, confOptions)
+	config.NewBundle("kumuluzee", &regconf, config.Options{
+		ConfigPath: confOptions.ConfigPath,
+		LogLevel:   logm.LvlMute,
+	})
 
 	// Load from RegisterOptions, override file configuration
 	if regOptions.Value != "" {
@@ -153,7 +162,7 @@ func extractServicesWithVersion(services []discoveredService, wantVersion semver
 // returns a randomly picked instace from discovered services.
 // Note that function can return both a valid, non-empty service string and an error, which means
 // that no proper service could be found and the lastKnownService string is being returned
-func pickRandomServiceInstance(discoveredInstances []discoveredService, options DiscoverOptions, lastKnownService string) (service string, err error) {
+func pickRandomServiceInstance(discoveredInstances []discoveredService, gatewayUrls []*gatewayURLWatch, options DiscoverOptions, lastKnownService string) (service string, err error) {
 	wantVersion, err := parseVersion(options.Version)
 	if err != nil {
 		if lastKnownService != "" {
@@ -172,8 +181,17 @@ func pickRandomServiceInstance(discoveredInstances []discoveredService, options 
 	}
 
 	randomInstance := instances[rand.Intn(len(instances))]
-	if options.AccessType == AccessTypeGateway && randomInstance.gatewayURL != "" {
-		return randomInstance.gatewayURL, nil
+
+	var instanceGatewayURL string
+	watcherNamespace := fmt.Sprintf("/environments/%s/services/%s/%s", options.Environment, options.Value, randomInstance.version.String())
+	for _, w := range gatewayUrls {
+		if w.gatewayID == watcherNamespace {
+			instanceGatewayURL = w.gatewayURL
+		}
+	}
+
+	if options.AccessType == AccessTypeGateway && instanceGatewayURL != "" {
+		return instanceGatewayURL, nil
 	} else if randomInstance.directURL != "" {
 		return randomInstance.directURL, nil
 	} else {

@@ -28,6 +28,7 @@ type etcdDiscoverySource struct {
 	serviceInstance *etcdServiceInstance
 
 	lastKnownService string // last known service from discovery
+	gatewayURLs      []*gatewayURLWatch
 
 	logger *logm.Logm
 }
@@ -156,17 +157,52 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 				// fmt.Printf("key=%v value=%v", node.Key, node.Value)
 				if path.Base(node.Key) == "url" {
 					discoveredInstance.directURL = node.Value
-				} else if path.Base(node.Key) == "gatewayUrl" { // TODO gateway url is not here!
-					discoveredInstance.gatewayURL = node.Value
 				}
 			}
 
 			discoveredInstances = append(discoveredInstances, discoveredInstance)
+
+			// ---- add a watch for gatewayUrl for discovering service (if not already made)
+			// TODO: same for both Consul and etcd, try to make it DRY
+			watcherNamespace := fmt.Sprintf("/environments/%s/services/%s/%s", options.Environment, options.Value, discoveredInstance.version.String())
+			var hasWatch bool
+			for _, w := range d.gatewayURLs {
+				if w.gatewayID == watcherNamespace {
+					// watch already set :)
+					hasWatch = true
+					break
+				}
+			}
+			if !hasWatch {
+				// make a watch for this one!
+				d.logger.Info("Creating a gatewayUrl watch for %s", watcherNamespace)
+
+				d.gatewayURLs = append(d.gatewayURLs, &gatewayURLWatch{
+					gatewayID: watcherNamespace,
+				})
+				config.NewUtil(config.Options{
+					Extension:          d.configOptions.Extension,
+					ExtensionNamespace: watcherNamespace,
+					ConfigPath:         d.configOptions.ConfigPath,
+					LogLevel:           logm.LvlMute,
+				}).Subscribe("gatewayUrl", func(key string, value string) {
+					for _, w := range d.gatewayURLs {
+						if w.gatewayID == watcherNamespace {
+							d.logger.Info("Updated gatewayUrl value for %s (new value: %s)", watcherNamespace, value)
+							w.gatewayURL = value
+							break
+						}
+					}
+					return
+				})
+			}
+
+			// ----
 		}
 	}
 	// -----
 
-	service, err := pickRandomServiceInstance(discoveredInstances, options, d.lastKnownService)
+	service, err := pickRandomServiceInstance(discoveredInstances, d.gatewayURLs, options, d.lastKnownService)
 
 	if err != nil {
 		if service != "" {

@@ -26,6 +26,7 @@ type consulDiscoverySource struct {
 	serviceInstance *consulServiceInstance
 
 	lastKnownService string // last known service from discovery
+	gatewayURLs      []*gatewayURLWatch
 
 	logger *logm.Logm
 }
@@ -47,7 +48,10 @@ func newConsulDiscoverySource(options config.Options, logger *logm.Logm) discove
 	d.logger = logger
 
 	d.configOptions = options
-	conf := config.NewUtil(options)
+	conf := config.NewUtil(config.Options{
+		ConfigPath: options.ConfigPath,
+		LogLevel:   logm.LvlInfo, // bit less logs from config
+	})
 
 	startRD, maxRD := getRetryDelays(conf)
 	d.startRetryDelay = startRD
@@ -157,21 +161,46 @@ func (d *consulDiscoverySource) DiscoverService(options DiscoverOptions) (string
 			addr,
 			serviceEntry.Service.Port)
 
-		// get gateway url
-		kv := d.client.KV()
-		key := fmt.Sprintf("/environments/%s/services/%s/%s/gatewayUrl",
-			options.Environment, options.Value, discoveredInstance.version.String())
+		discoveredInstances = append(discoveredInstances, discoveredInstance)
 
-		pair, _, err := kv.Get(key, nil)
-		if err == nil && pair != nil {
-			discoveredInstance.gatewayURL = string(pair.Value)
+		// ---- add a watch for gatewayUrl for discovering service (if not already made)
+		watcherNamespace := fmt.Sprintf("/environments/%s/services/%s/%s", options.Environment, options.Value, discoveredInstance.version.String())
+		var hasWatch bool
+		for _, w := range d.gatewayURLs {
+			if w.gatewayID == watcherNamespace {
+				// watch already set :)
+				hasWatch = true
+				break
+			}
+		}
+		if !hasWatch {
+			// make a watch for this one!
+			d.logger.Info("Creating a gatewayUrl watch for %s", watcherNamespace)
+
+			d.gatewayURLs = append(d.gatewayURLs, &gatewayURLWatch{
+				gatewayID: watcherNamespace,
+			})
+			config.NewUtil(config.Options{
+				Extension:          d.configOptions.Extension,
+				ExtensionNamespace: watcherNamespace,
+				ConfigPath:         d.configOptions.ConfigPath,
+				LogLevel:           logm.LvlMute,
+			}).Subscribe("gatewayUrl", func(key string, value string) {
+				for _, w := range d.gatewayURLs {
+					if w.gatewayID == watcherNamespace {
+						d.logger.Info("Updated gatewayUrl value for %s (new value: %s)", watcherNamespace, value)
+						w.gatewayURL = value
+						break
+					}
+				}
+				return
+			})
 		}
 
-		discoveredInstances = append(discoveredInstances, discoveredInstance)
+		// ----
 	}
 	// -----
-
-	service, err := pickRandomServiceInstance(discoveredInstances, options, d.lastKnownService)
+	service, err := pickRandomServiceInstance(discoveredInstances, d.gatewayURLs, options, d.lastKnownService)
 
 	if err != nil {
 		if service != "" {

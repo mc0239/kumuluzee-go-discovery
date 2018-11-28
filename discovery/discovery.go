@@ -7,7 +7,7 @@ import (
 
 // Options struct is used when instantiating a new Util.
 type Options struct {
-	// Additional configuration source to connect to. Possible values are: "consul"
+	// Additional configuration source to connect to. Possible values are: "consul", "etcd"
 	Extension string
 	// ConfigPath is a path to configuration file, including the configuration file name.
 	// Passing an empty string will default to config/config.yaml
@@ -85,18 +85,22 @@ type discoverySource interface {
 func New(options Options) Util {
 
 	lgr := logm.New("KumuluzEE-discovery")
+	lgr.LogLevel = options.LogLevel
 
 	var src discoverySource
 
 	if options.Extension == "consul" {
+		// TODO: potential mixup between cofig.Options and (discovery.)Options
 		src = newConsulDiscoverySource(config.Options{
+			Extension:  options.Extension,
 			ConfigPath: options.ConfigPath,
-			LogLevel:   logm.LvlWarning,
+			LogLevel:   options.LogLevel,
 		}, &lgr)
 	} else if options.Extension == "etcd" {
 		src = newEtcdDiscoverySource(config.Options{
+			Extension:  options.Extension,
 			ConfigPath: options.ConfigPath,
-			LogLevel:   logm.LvlWarning,
+			LogLevel:   options.LogLevel,
 		}, &lgr)
 	} else {
 		lgr.Error("Specified discovery source extension is invalid.")
