@@ -50,7 +50,10 @@ func newEtcdDiscoverySource(options config.Options, logger *logm.Logm) discovery
 	d.logger = logger
 
 	d.configOptions = options
-	conf := config.NewUtil(options)
+	conf := config.NewUtil(config.Options{
+		ConfigPath: options.ConfigPath,
+		LogLevel:   logm.LvlWarning, // bit less logs from config
+	})
 
 	startRD, maxRD := getRetryDelays(conf)
 	d.startRetryDelay = startRD
@@ -163,8 +166,16 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 			discoveredInstances = append(discoveredInstances, discoveredInstance)
 
 			// ---- add a watch for gatewayUrl for discovering service (if not already made)
-			// TODO: same for both Consul and etcd, try to make it DRY
+			// TODO: this part is the same for both etcd & consul: make the code more DRY
 			watcherNamespace := fmt.Sprintf("/environments/%s/services/%s/%s", options.Environment, options.Value, discoveredInstance.version.String())
+
+			util := config.NewUtil(config.Options{
+				Extension:          d.configOptions.Extension,
+				ExtensionNamespace: watcherNamespace,
+				ConfigPath:         d.configOptions.ConfigPath,
+				LogLevel:           logm.LvlMute,
+			})
+
 			var hasWatch bool
 			for _, w := range d.gatewayURLs {
 				if w.gatewayID == watcherNamespace {
@@ -177,15 +188,12 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 				// make a watch for this one!
 				d.logger.Info("Creating a gatewayUrl watch for %s", watcherNamespace)
 
+				g, _ := util.GetString("gatewayUrl")
 				d.gatewayURLs = append(d.gatewayURLs, &gatewayURLWatch{
-					gatewayID: watcherNamespace,
+					gatewayID:  watcherNamespace,
+					gatewayURL: g,
 				})
-				config.NewUtil(config.Options{
-					Extension:          d.configOptions.Extension,
-					ExtensionNamespace: watcherNamespace,
-					ConfigPath:         d.configOptions.ConfigPath,
-					LogLevel:           logm.LvlMute,
-				}).Subscribe("gatewayUrl", func(key string, value string) {
+				util.Subscribe("gatewayUrl", func(key string, value string) {
 					for _, w := range d.gatewayURLs {
 						if w.gatewayID == watcherNamespace {
 							d.logger.Info("Updated gatewayUrl value for %s (new value: %s)", watcherNamespace, value)
@@ -196,7 +204,6 @@ func (d *etcdDiscoverySource) DiscoverService(options DiscoverOptions) (string, 
 					return
 				})
 			}
-
 			// ----
 		}
 	}
