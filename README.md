@@ -108,11 +108,11 @@ Function takes four parameters:
 Example of service discovery:
 
 ```go
-service, err := disc.DiscoverService(discovery.DiscoverOptions{
-    Value: "",
+serviceURL, err := disc.DiscoverService(discovery.DiscoverOptions{
+    Value:       "",
     Environment: "dev",
-    Version: "*",
-    AccessType: discovery.AccessTypeGateway,
+    Version:     "*",
+    AccessType:  discovery.AccessTypeDirect
 })
 
 if err != nil {
@@ -121,7 +121,7 @@ if err != nil {
 
 } else {
     // There was no error, a service was discovered 
-    fmt.Printf("Service discovered, address: %s:%d\n", service.Address, service.Port)
+    fmt.Printf("Service discovered, address: %s\n", serviceURL)
 
 }
 ```
